@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { useEditor, EditorContent, ReactRenderer, ReactNodeViewRenderer } from '@tiptap/react';
+import { useEditor, EditorContent, ReactRenderer, ReactNodeViewRenderer, NodeViewWrapper } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Bold from '@tiptap/extension-bold';
 import Italic from '@tiptap/extension-italic';
@@ -56,6 +56,7 @@ import CodeBlockComponent from './CodeBlockComponent';
 import { SlashCommandList, getSlashCommands } from './SlashCommands';
 import DrawingCanvas from '@/components/ui/DrawingCanvas';
 import VoiceRecorder from '@/components/ui/VoiceRecorder';
+import ImageAnnotator from '@/components/ui/ImageAnnotator';
 import type { Note } from '@/lib/types';
 import {
   Maximize2, Minimize2, Hash, Link as LinkIcon, X, Tag,
@@ -142,6 +143,62 @@ const AudioNode = Node.create({
 
       return { dom: container };
     };
+  },
+});
+
+// ─── Annotatable Image Node ───────────────────────────────────────────────────
+
+function AnnotatableImageView({
+  node,
+  updateAttributes,
+}: {
+  node: { attrs: { src: string; alt?: string; title?: string } };
+  updateAttributes: (attrs: Record<string, unknown>) => void;
+}) {
+  const [annotating, setAnnotating] = useState(false);
+
+  return (
+    <NodeViewWrapper as="div" contentEditable={false} style={{ display: 'block' }}>
+      <div className="relative group my-2 inline-block max-w-full">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={node.attrs.src}
+          alt={node.attrs.alt || ''}
+          className="max-w-full rounded-lg block"
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
+        />
+        {/* Annotate button — hover on desktop, always shown on mobile */}
+        <button
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setAnnotating(true); }}
+          onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); setAnnotating(true); }}
+          className={cn(
+            'absolute bottom-2 right-2 flex items-center gap-1.5 px-2.5 py-1.5',
+            'bg-black/70 hover:bg-black/90 text-white text-xs font-medium rounded-lg',
+            'backdrop-blur-sm transition-all select-none',
+            'opacity-100 md:opacity-0 md:group-hover:opacity-100'
+          )}
+        >
+          ✏️ Annotate
+        </button>
+      </div>
+
+      {annotating && (
+        <ImageAnnotator
+          imageSrc={node.attrs.src}
+          onSave={(newSrc) => updateAttributes({ src: newSrc })}
+          onClose={() => setAnnotating(false)}
+        />
+      )}
+    </NodeViewWrapper>
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const AnnotatableImageExtension = ImageExtension.extend({
+  addNodeView() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return ReactNodeViewRenderer(AnnotatableImageView as any);
   },
 });
 
@@ -277,7 +334,7 @@ export default function Editor({ note }: EditorProps) {
       TaskList, TaskItem.configure({ nested: true }),
       TableExtension.configure({ resizable: true }),
       TableRow, TableCell, TableHeader,
-      ImageExtension.configure({ inline: false, allowBase64: true }),
+      AnnotatableImageExtension.configure({ inline: false, allowBase64: true }),
       Link.configure({ openOnClick: false, HTMLAttributes: { class: 'note-link', rel: 'noopener' } }),
       Placeholder.configure({ placeholder: 'Start writing… type / for commands' }),
       CharacterCount,
