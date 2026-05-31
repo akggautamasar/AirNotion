@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Pin,
   Archive,
@@ -10,6 +10,9 @@ import {
   Palette,
   MoreHorizontal,
   Star,
+  RotateCcw,
+  FolderOpen,
+  Check,
 } from 'lucide-react';
 import { useNotesStore } from '@/store/notesStore';
 import { cn, noteColorToClass, formatRelativeTime, truncate } from '@/lib/utils';
@@ -25,42 +28,201 @@ interface NoteCardProps {
 }
 
 export default function NoteCard({ note, view, isActive, onClick }: NoteCardProps) {
-  const { pinNote, archiveNote, deleteNote, duplicateNote, setNoteColor } = useNotesStore();
-  const [showActions, setShowActions] = useState(false);
+  const { pinNote, archiveNote, restoreNote, deleteNote, duplicateNote, setNoteColor, folders, moveNoteToFolder } = useNotesStore();
+  const [showDropdown, setShowDropdown] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const colors = noteColorToClass(note.color);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!showDropdown) return;
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+        setShowColorPicker(false);
+        setShowFolderPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showDropdown]);
 
   const handlePin = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     await pinNote(note.id);
     toast.success(note.pinned ? 'Unpinned' : 'Pinned');
+    setShowDropdown(false);
   }, [pinNote, note.id, note.pinned]);
 
   const handleArchive = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     await archiveNote(note.id);
     toast.success('Archived');
+    setShowDropdown(false);
   }, [archiveNote, note.id]);
+
+  const handleRestore = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    await restoreNote(note.id);
+    toast.success('Restored');
+    setShowDropdown(false);
+  }, [restoreNote, note.id]);
 
   const handleDelete = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm('Delete this note?')) {
-      await deleteNote(note.id);
-      toast.success('Deleted');
-    }
+    await deleteNote(note.id);
+    toast.success('Deleted');
+    setShowDropdown(false);
   }, [deleteNote, note.id]);
 
   const handleDuplicate = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     await duplicateNote(note.id);
     toast.success('Duplicated');
+    setShowDropdown(false);
   }, [duplicateNote, note.id]);
 
   const handleColorChange = useCallback(async (color: NoteColor) => {
     await setNoteColor(note.id, color);
     setShowColorPicker(false);
+    setShowDropdown(false);
   }, [setNoteColor, note.id]);
+
+  const handleMoveToFolder = useCallback(async (folderId: string) => {
+    await moveNoteToFolder(note.id, folderId);
+    toast.success('Moved to folder');
+    setShowFolderPicker(false);
+    setShowDropdown(false);
+  }, [moveNoteToFolder, note.id]);
+
+  const openDropdown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowDropdown((v) => !v);
+    setShowColorPicker(false);
+    setShowFolderPicker(false);
+  };
+
+  const DropdownMenu = () => (
+    <AnimatePresence>
+      {showDropdown && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: -4 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: -4 }}
+          transition={{ duration: 0.1 }}
+          className="absolute right-0 top-full mt-1 z-30 w-44 bg-white dark:bg-surface-800 rounded-xl shadow-dropdown border border-surface-200 dark:border-surface-700 py-1 overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Pin/Unpin */}
+          <DropdownItem onClick={handlePin} icon={<Star size={13} className={cn(note.pinned && 'fill-yellow-500 text-yellow-500')} />}>
+            {note.pinned ? 'Unpin' : 'Pin'}
+          </DropdownItem>
+
+          {/* Archive / Restore */}
+          {note.archived ? (
+            <DropdownItem onClick={handleRestore} icon={<RotateCcw size={13} />}>
+              Restore to notes
+            </DropdownItem>
+          ) : (
+            <DropdownItem onClick={handleArchive} icon={<Archive size={13} />}>
+              Archive
+            </DropdownItem>
+          )}
+
+          {/* Move to folder */}
+          {folders.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowFolderPicker((v) => !v); setShowColorPicker(false); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+              >
+                <FolderOpen size={13} className="text-surface-400 flex-shrink-0" />
+                <span className="flex-1 text-left">Move to folder</span>
+                <span className="text-surface-300 dark:text-surface-500">›</span>
+              </button>
+              <AnimatePresence>
+                {showFolderPicker && (
+                  <motion.div
+                    initial={{ opacity: 0, x: -4 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -4 }}
+                    transition={{ duration: 0.1 }}
+                    className="absolute right-full top-0 mr-1 w-44 bg-white dark:bg-surface-800 rounded-xl shadow-dropdown border border-surface-200 dark:border-surface-700 py-1 z-40"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={() => handleMoveToFolder('all')}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+                    >
+                      <span>📋</span>
+                      <span className="flex-1 text-left">All Notes</span>
+                      {note.folder === 'all' && <Check size={11} className="text-brand-500" />}
+                    </button>
+                    {folders.map((folder) => (
+                      <button
+                        key={folder.id}
+                        onClick={() => handleMoveToFolder(folder.id)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+                      >
+                        <span>{folder.icon}</span>
+                        <span className="flex-1 text-left truncate">{folder.name}</span>
+                        {note.folder === folder.id && <Check size={11} className="text-brand-500" />}
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+
+          {/* Duplicate */}
+          <DropdownItem onClick={handleDuplicate} icon={<Copy size={13} />}>
+            Duplicate
+          </DropdownItem>
+
+          {/* Color */}
+          <div className="relative">
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowColorPicker((v) => !v); setShowFolderPicker(false); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+            >
+              <Palette size={13} className="text-surface-400 flex-shrink-0" />
+              <span className="flex-1 text-left">Color</span>
+              <span className="text-surface-300 dark:text-surface-500">›</span>
+            </button>
+            <AnimatePresence>
+              {showColorPicker && (
+                <motion.div
+                  initial={{ opacity: 0, x: -4 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -4 }}
+                  transition={{ duration: 0.1 }}
+                  className="absolute right-full top-0 mr-1 bg-white dark:bg-surface-800 rounded-xl shadow-dropdown border border-surface-200 dark:border-surface-700 p-2 z-40"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <ColorPicker value={note.color} onChange={handleColorChange} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          <div className="my-1 border-t border-surface-100 dark:border-surface-700" />
+
+          {/* Delete */}
+          <button
+            onClick={handleDelete}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+          >
+            <Trash2 size={13} className="flex-shrink-0" />
+            <span>Delete</span>
+          </button>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 
   if (view === 'list') {
     return (
@@ -76,8 +238,6 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
             ? 'bg-brand-500/10 border-l-2 border-l-brand-500'
             : `hover:bg-surface-100 dark:hover:bg-surface-800 active:bg-surface-100 dark:active:bg-surface-800 ${colors.bg} ${colors.bgDark}`
         )}
-        onMouseEnter={() => setShowActions(true)}
-        onMouseLeave={() => { setShowActions(false); setShowColorPicker(false); }}
       >
         {/* Color dot */}
         {note.color !== 'default' && (
@@ -113,16 +273,19 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
           {formatRelativeTime(note.updatedAt)}
         </span>
 
-        {/* Actions — always visible on mobile, hover-only on desktop */}
-        <div className={cn(
-          'flex items-center gap-0.5 flex-shrink-0 transition-opacity',
-          'opacity-100 md:opacity-0 md:group-hover:opacity-100'
-        )}>
-          <ActionBtn onClick={handlePin} title={note.pinned ? 'Unpin' : 'Pin'}>
-            <Star size={13} className={cn(note.pinned && 'fill-yellow-500 text-yellow-500')} />
-          </ActionBtn>
-          <ActionBtn onClick={handleArchive} title="Archive"><Archive size={13} /></ActionBtn>
-          <ActionBtn onClick={handleDelete} title="Delete" danger><Trash2 size={13} /></ActionBtn>
+        {/* Context menu button — always visible on mobile, hover-only on desktop */}
+        <div ref={dropdownRef} className="relative flex-shrink-0">
+          <button
+            onClick={openDropdown}
+            title="More options"
+            className={cn(
+              'p-1.5 rounded-lg transition-colors text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 hover:bg-surface-100 dark:hover:bg-surface-700',
+              'opacity-100 md:opacity-0 md:group-hover:opacity-100'
+            )}
+          >
+            <MoreHorizontal size={15} />
+          </button>
+          <DropdownMenu />
         </div>
       </motion.div>
     );
@@ -142,12 +305,10 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
         isActive ? 'ring-2 ring-brand-500 ring-offset-2 ring-offset-white dark:ring-offset-surface-900' : '',
         colors.bg, colors.bgDark, colors.border, colors.borderDark
       )}
-      onMouseEnter={() => setShowActions(true)}
-      onMouseLeave={() => { setShowActions(false); setShowColorPicker(false); }}
     >
       {/* Pin badge */}
       {note.pinned && (
-        <div className="absolute top-2 right-2">
+        <div className="absolute top-2 left-2">
           <Star size={13} className="text-yellow-500 fill-yellow-500" />
         </div>
       )}
@@ -159,7 +320,7 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
 
       {/* Title */}
       <h3 className={cn(
-        'font-semibold text-sm leading-snug mb-1.5',
+        'font-semibold text-sm leading-snug mb-1.5 pr-6',
         note.title ? 'text-surface-900 dark:text-surface-100' : 'text-surface-400 italic'
       )}>
         {note.title || 'Untitled'}
@@ -197,28 +358,32 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
         )}
       </div>
 
-      {/* Hover actions */}
-      <AnimatedActions visible={showActions}>
-        <ActionBtn onClick={handlePin} title={note.pinned ? 'Unpin' : 'Pin'}>
-          <Star size={13} className={cn(note.pinned && 'fill-yellow-500 text-yellow-500')} />
-        </ActionBtn>
-        <div className="relative">
-          <ActionBtn onClick={(e) => { e.stopPropagation(); setShowColorPicker(!showColorPicker); }} title="Color">
-            <Palette size={13} />
-          </ActionBtn>
-          {showColorPicker && (
-            <div
-              className="absolute right-0 top-full mt-1 z-20 bg-white dark:bg-surface-800 rounded-xl shadow-dropdown border border-surface-200 dark:border-surface-700 p-2"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <ColorPicker value={note.color} onChange={handleColorChange} />
-            </div>
-          )}
+      {/* Archived restore badge */}
+      {note.archived && (
+        <div className="absolute top-2 right-8">
+          <button
+            onClick={handleRestore}
+            className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 font-medium hover:bg-green-200 dark:hover:bg-green-900/50 transition-colors"
+          >
+            Restore
+          </button>
         </div>
-        <ActionBtn onClick={handleDuplicate} title="Duplicate"><Copy size={13} /></ActionBtn>
-        <ActionBtn onClick={handleArchive} title="Archive"><Archive size={13} /></ActionBtn>
-        <ActionBtn onClick={handleDelete} title="Delete" danger><Trash2 size={13} /></ActionBtn>
-      </AnimatedActions>
+      )}
+
+      {/* Context menu button */}
+      <div ref={dropdownRef} className="absolute top-2 right-2" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={openDropdown}
+          title="More options"
+          className={cn(
+            'p-1 rounded-lg transition-colors text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 hover:bg-white/80 dark:hover:bg-surface-700',
+            'opacity-100 md:opacity-0 md:group-hover:opacity-100'
+          )}
+        >
+          <MoreHorizontal size={14} />
+        </button>
+        <DropdownMenu />
+      </div>
     </motion.div>
   );
 }
@@ -271,5 +436,25 @@ function AnimatedActions({ visible, children }: { visible: boolean; children: Re
     >
       {children}
     </div>
+  );
+}
+
+function DropdownItem({
+  children,
+  onClick,
+  icon,
+}: {
+  children: React.ReactNode;
+  onClick: (e: React.MouseEvent) => void;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+    >
+      {icon && <span className="text-surface-400 flex-shrink-0">{icon}</span>}
+      <span>{children}</span>
+    </button>
   );
 }

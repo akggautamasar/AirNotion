@@ -179,7 +179,7 @@ export default function Sidebar({ onClose, onNavigate }: SidebarProps) {
             label={item.label}
             count={item.count}
             active={selectedFolder === item.id && !selectedTag}
-            onClick={() => { setSelectedFolder(item.id); setSelectedTag(null); onNavigate?.() || onClose?.(); }}
+            onClick={() => { setSelectedFolder(item.id); onNavigate?.() || onClose?.(); }}
           />
         ))}
 
@@ -231,7 +231,7 @@ export default function Sidebar({ onClose, onNavigate }: SidebarProps) {
                             ? 'bg-brand-500/10 text-brand-600 dark:text-brand-400'
                             : 'text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800'
                         )}
-                        onClick={() => { setSelectedFolder(folder.id); setSelectedTag(null); onNavigate?.() || onClose?.(); }}
+                        onClick={() => { setSelectedFolder(folder.id); onNavigate?.() || onClose?.(); }}
                       >
                         <span className="text-base flex-shrink-0" style={{ fontSize: '14px' }}>
                           {folder.icon}

@@ -252,10 +252,8 @@ export default function AppLayout() {
           <div
             className={cn(
               'flex flex-col border-r border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 flex-shrink-0',
-              mobileView === 'editor' ? 'hidden' : 'w-full',
-              activeNote && 'w-72'
+              mobileView === 'editor' ? 'hidden' : (activeNote ? 'w-72' : 'w-full')
             )}
-            style={{ width: activeNote ? 280 : undefined }}
           >
             <div className="flex items-center h-10 px-2 border-b border-surface-200 dark:border-surface-800 flex-shrink-0">
               <button
