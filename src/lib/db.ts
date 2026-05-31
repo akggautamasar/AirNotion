@@ -42,13 +42,18 @@ async function tgRequest(method: string, data?: Record<string, unknown>): Promis
   return json.result;
 }
 
-async function sendMessage(chatId: number | string, text: string): Promise<{ message_id: number }> {
-  return tgRequest('sendMessage', {
+async function sendMessage(
+  chatId: number | string,
+  text: string,
+  parseMode?: 'Markdown' | 'HTML'
+): Promise<{ message_id: number }> {
+  const body: Record<string, unknown> = {
     chat_id: chatId,
     text,
-    parse_mode: 'Markdown',
     disable_notification: true,
-  }) as Promise<{ message_id: number }>;
+  };
+  if (parseMode) body.parse_mode = parseMode;
+  return tgRequest('sendMessage', body) as Promise<{ message_id: number }>;
 }
 
 async function sendDocument(
@@ -347,7 +352,8 @@ class AirNotionDb {
   async sendOTPMessage(chatId: number, code: string): Promise<void> {
     await sendMessage(
       chatId,
-      `🔐 Your AirNotion login code:\n\n*${code}*\n\nThis code expires in 5 minutes.`
+      `🔐 Your AirNotion login code:\n\n*${code}*\n\nThis code expires in 5 minutes.`,
+      'Markdown'
     );
   }
 }
