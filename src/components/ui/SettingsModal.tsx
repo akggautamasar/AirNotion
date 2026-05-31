@@ -17,9 +17,7 @@ import {
   EyeOff,
 } from 'lucide-react';
 import { useNotesStore } from '@/store/notesStore';
-import { cn } from '@/lib/utils';
-import { testTelegramConnection } from '@/lib/telegram';
-import { htmlToMarkdown } from '@/lib/utils';
+import { cn, htmlToMarkdown } from '@/lib/utils';
 import toast from 'react-hot-toast';
 
 type Tab = 'account' | 'editor' | 'appearance' | 'shortcuts' | 'data';
@@ -53,19 +51,24 @@ const SHORTCUTS = [
 ];
 
 export default function SettingsModal() {
-  const { isSettingsOpen, closeSettings, settings, setSettings, notes } = useNotesStore();
+  const { isSettingsOpen, closeSettings, settings, setSettings, notes, hasServerCredentials } = useNotesStore();
   const [activeTab, setActiveTab] = useState<Tab>('account');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [showToken, setShowToken] = useState(false);
 
   const handleTestConnection = useCallback(async () => {
-    if (!settings.telegramBotToken || !settings.telegramChatId) {
-      toast.error('Enter bot token and chat ID first');
-      return;
-    }
     setTestStatus('testing');
     try {
-      const ok = await testTelegramConnection(settings.telegramBotToken, settings.telegramChatId);
+      // Always go through the API route — it uses server env vars or forwarded headers
+      const res = await fetch('/api/telegram/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          botToken: settings.telegramBotToken || undefined,
+          chatId: settings.telegramChatId || undefined,
+        }),
+      });
+      const { ok } = await res.json();
       setTestStatus(ok ? 'ok' : 'error');
       toast[ok ? 'success' : 'error'](ok ? 'Telegram connected!' : 'Connection failed');
     } catch {
@@ -186,10 +189,23 @@ export default function SettingsModal() {
                   <div>
                     <h3 className="text-sm font-semibold text-surface-700 dark:text-surface-300 mb-3">Telegram Storage</h3>
                     <p className="text-xs text-surface-500 dark:text-surface-400 mb-4 leading-relaxed">
-                      AirNotion uses your Telegram account as a backend. Create a bot via @BotFather and get your Chat ID via @userinfobot.
+                      AirNotion uses Telegram as its backend — unlimited storage, free forever.
                     </p>
                   </div>
 
+                  {hasServerCredentials && (
+                    <div className="flex items-start gap-2.5 p-3 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
+                      <CheckCircle size={15} className="text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs font-semibold text-green-700 dark:text-green-300">Configured via environment variables</p>
+                        <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
+                          Your Telegram credentials are set securely on the server. No action needed here.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {!hasServerCredentials && (
                   <div className="space-y-3">
                     <label className="block">
                       <span className="text-xs font-medium text-surface-600 dark:text-surface-400 uppercase tracking-wider">Bot Token</span>
@@ -221,6 +237,7 @@ export default function SettingsModal() {
                       />
                     </label>
                   </div>
+                  )}
 
                   <button
                     onClick={handleTestConnection}

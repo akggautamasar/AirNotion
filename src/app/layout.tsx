@@ -45,14 +45,16 @@ function ThemeProvider({ children }: { children: ReactNode }) {
 
 function StoreInitializer() {
   const loadFromCache = useNotesStore((s) => s.loadFromCache);
+  const checkServerCredentials = useNotesStore((s) => s.checkServerCredentials);
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
     if (!initialized) {
       loadFromCache();
+      checkServerCredentials();
       setInitialized(true);
     }
-  }, [initialized, loadFromCache]);
+  }, [initialized, loadFromCache, checkServerCredentials]);
 
   return null;
 }

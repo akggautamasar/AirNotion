@@ -17,12 +17,6 @@ import {
   countChars,
   extractLinks,
 } from '@/lib/utils';
-import {
-  saveNoteToTelegram,
-  updateNoteInTelegram,
-  deleteNoteFromTelegram,
-  fetchAllNotes,
-} from '@/lib/telegram';
 
 // ─── Default values ──────────────────────────────────────────────────────────
 
@@ -64,6 +58,42 @@ function buildFuse(notes: Note[]): Fuse<Note> {
   });
 }
 
+// ─── API helpers ──────────────────────────────────────────────────────────────
+// All Telegram communication goes through Next.js API routes so the bot token
+// stays on the server (env vars) and is never exposed to the browser.
+
+function buildHeaders(settings: AppSettings): HeadersInit {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  // Only send user-supplied credentials if they entered them manually in settings.
+  // When env vars are set on the server, API routes use those automatically.
+  if (settings.telegramBotToken) headers['x-telegram-bot-token'] = settings.telegramBotToken;
+  if (settings.telegramChatId) headers['x-telegram-chat-id'] = settings.telegramChatId;
+  return headers;
+}
+
+async function apiPost(path: string, body: unknown, settings: AppSettings): Promise<Response> {
+  return fetch(path, {
+    method: 'POST',
+    headers: buildHeaders(settings),
+    body: JSON.stringify(body),
+  });
+}
+
+async function apiPut(path: string, body: unknown, settings: AppSettings): Promise<Response> {
+  return fetch(path, {
+    method: 'PUT',
+    headers: buildHeaders(settings),
+    body: JSON.stringify(body),
+  });
+}
+
+async function apiDelete(path: string, settings: AppSettings): Promise<Response> {
+  return fetch(path, {
+    method: 'DELETE',
+    headers: buildHeaders(settings),
+  });
+}
+
 // ─── Store interface ─────────────────────────────────────────────────────────
 
 interface NotesStore {
@@ -80,6 +110,7 @@ interface NotesStore {
   isSettingsOpen: boolean;
   isCommandPaletteOpen: boolean;
   viewMode: ViewMode;
+  hasServerCredentials: boolean;
 
   // Note actions
   setActiveNote: (id: string | null) => void;
@@ -105,6 +136,7 @@ interface NotesStore {
   // Sync
   syncWithTelegram: () => Promise<void>;
   loadFromCache: () => void;
+  checkServerCredentials: () => Promise<void>;
 
   // Settings
   setSettings: (updates: Partial<AppSettings>) => void;
@@ -131,10 +163,7 @@ interface NotesStore {
 // ─── Helper: update backlinks ─────────────────────────────────────────────────
 
 function recomputeBacklinks(notes: Note[]): Note[] {
-  // Reset all backlinks
   const updated = notes.map((n) => ({ ...n, backlinks: [] as string[] }));
-
-  // Rebuild from linkedNotes
   for (const note of updated) {
     for (const linkedId of note.linkedNotes) {
       const target = updated.find((n) => n.id === linkedId);
@@ -185,6 +214,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   isSettingsOpen: false,
   isCommandPaletteOpen: false,
   viewMode: 'grid',
+  hasServerCredentials: false,
 
   // ── Note actions ──────────────────────────────────────────────────────────
 
@@ -203,24 +233,25 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     storage.setNotes(withBacklinks);
     get().computeTags();
 
-    // Async sync to Telegram
-    if (settings.telegramBotToken && settings.telegramChatId) {
+    // Sync via API route (server uses env vars; client sends manual creds as headers)
+    const hasAnyCredentials =
+      get().hasServerCredentials || (settings.telegramBotToken && settings.telegramChatId);
+    if (hasAnyCredentials) {
       try {
-        const msgId = await saveNoteToTelegram(
-          settings.telegramBotToken,
-          settings.telegramChatId,
-          note
-        );
-        const idx = storage.getMessageIndex();
-        idx[note.id] = msgId;
-        storage.setMessageIndex(idx);
-
-        // Update note with messageId
-        const finalNotes = get().notes.map((n) =>
-          n.id === note.id ? { ...n, telegramMessageId: msgId } : n
-        );
-        set({ notes: finalNotes });
-        storage.setNotes(finalNotes);
+        const res = await apiPost('/api/notes', note, settings);
+        if (res.ok) {
+          const { messageId } = await res.json();
+          if (messageId) {
+            const idx = storage.getMessageIndex();
+            idx[note.id] = messageId;
+            storage.setMessageIndex(idx);
+            const finalNotes = get().notes.map((n) =>
+              n.id === note.id ? { ...n, telegramMessageId: messageId } : n
+            );
+            set({ notes: finalNotes });
+            storage.setNotes(finalNotes);
+          }
+        }
       } catch (err) {
         console.error('Failed to sync new note to Telegram:', err);
       }
@@ -236,21 +267,13 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 
     const now = new Date().toISOString();
     const plainText =
-      updates.content !== undefined
-        ? extractPlainText(updates.content)
-        : existing.plainText;
+      updates.content !== undefined ? extractPlainText(updates.content) : existing.plainText;
     const linkedNotes =
-      updates.content !== undefined
-        ? extractLinks(updates.content)
-        : existing.linkedNotes;
+      updates.content !== undefined ? extractLinks(updates.content) : existing.linkedNotes;
     const wordCount =
-      updates.content !== undefined
-        ? countWords(plainText)
-        : existing.wordCount;
+      updates.content !== undefined ? countWords(plainText) : existing.wordCount;
     const charCount =
-      updates.content !== undefined
-        ? countChars(plainText)
-        : existing.charCount;
+      updates.content !== undefined ? countChars(plainText) : existing.charCount;
 
     const updatedNote: Note = {
       ...existing,
@@ -268,34 +291,33 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     storage.setNotes(withBacklinks);
     get().computeTags();
 
-    // Async sync to Telegram
-    if (settings.telegramBotToken && settings.telegramChatId) {
+    const hasAnyCredentials =
+      get().hasServerCredentials || (settings.telegramBotToken && settings.telegramChatId);
+    if (hasAnyCredentials) {
       try {
         set((state) => ({
           settings: { ...state.settings, syncStatus: 'syncing' },
         }));
-        const newMsgId = await updateNoteInTelegram(
-          settings.telegramBotToken,
-          settings.telegramChatId,
-          updatedNote
-        );
-        const idx = storage.getMessageIndex();
-        idx[id] = newMsgId;
-        storage.setMessageIndex(idx);
-
-        const finalNotes = get().notes.map((n) =>
-          n.id === id ? { ...n, telegramMessageId: newMsgId } : n
-        );
-        set({
-          notes: finalNotes,
-          settings: {
-            ...get().settings,
-            syncStatus: 'success',
-            lastSynced: new Date().toISOString(),
-          },
-        });
-        storage.setNotes(finalNotes);
-        storage.setSettings({ syncStatus: 'success', lastSynced: new Date().toISOString() });
+        const res = await apiPut(`/api/notes/${id}`, updatedNote, settings);
+        if (res.ok) {
+          const data = await res.json();
+          const newMsgId = data?.note?.telegramMessageId;
+          if (newMsgId) {
+            const idx = storage.getMessageIndex();
+            idx[id] = newMsgId;
+            storage.setMessageIndex(idx);
+            const finalNotes = get().notes.map((n) =>
+              n.id === id ? { ...n, telegramMessageId: newMsgId } : n
+            );
+            set({ notes: finalNotes });
+            storage.setNotes(finalNotes);
+          }
+          const now2 = new Date().toISOString();
+          set((state) => ({
+            settings: { ...state.settings, syncStatus: 'success', lastSynced: now2 },
+          }));
+          storage.setSettings({ syncStatus: 'success', lastSynced: now2 });
+        }
       } catch (err) {
         console.error('Failed to sync updated note to Telegram:', err);
         set((state) => ({
@@ -319,20 +341,16 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     storage.setNotes(withBacklinks);
     get().computeTags();
 
-    // Remove from message index
     const idx = storage.getMessageIndex();
     const msgId = idx[id] || note.telegramMessageId;
     delete idx[id];
     storage.setMessageIndex(idx);
 
-    // Async delete from Telegram
-    if (settings.telegramBotToken && settings.telegramChatId && msgId) {
+    const hasAnyCredentials =
+      get().hasServerCredentials || (settings.telegramBotToken && settings.telegramChatId);
+    if (hasAnyCredentials && msgId) {
       try {
-        await deleteNoteFromTelegram(
-          settings.telegramBotToken,
-          settings.telegramChatId,
-          msgId
-        );
+        await apiDelete(`/api/notes/${id}?messageId=${msgId}`, settings);
       } catch (err) {
         console.error('Failed to delete note from Telegram:', err);
       }
@@ -360,18 +378,20 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     set({ notes: updatedNotes, activeNoteId: duplicate.id });
     storage.setNotes(updatedNotes);
 
-    // Sync to Telegram
     const { settings } = get();
-    if (settings.telegramBotToken && settings.telegramChatId) {
+    const hasAnyCredentials =
+      get().hasServerCredentials || (settings.telegramBotToken && settings.telegramChatId);
+    if (hasAnyCredentials) {
       try {
-        const msgId = await saveNoteToTelegram(
-          settings.telegramBotToken,
-          settings.telegramChatId,
-          duplicate
-        );
-        const idx = storage.getMessageIndex();
-        idx[duplicate.id] = msgId;
-        storage.setMessageIndex(idx);
+        const res = await apiPost('/api/notes', duplicate, settings);
+        if (res.ok) {
+          const { messageId } = await res.json();
+          if (messageId) {
+            const idx = storage.getMessageIndex();
+            idx[duplicate.id] = messageId;
+            storage.setMessageIndex(idx);
+          }
+        }
       } catch (err) {
         console.error('Failed to sync duplicated note:', err);
       }
@@ -421,19 +441,14 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   },
 
   updateFolder: (id, updates) => {
-    const folders = get().folders.map((f) =>
-      f.id === id ? { ...f, ...updates } : f
-    );
+    const folders = get().folders.map((f) => (f.id === id ? { ...f, ...updates } : f));
     set({ folders });
     storage.setFolders(folders);
   },
 
   deleteFolder: (id) => {
     const folders = get().folders.filter((f) => f.id !== id);
-    // Move notes in deleted folder to 'all'
-    const notes = get().notes.map((n) =>
-      n.folder === id ? { ...n, folder: 'all' } : n
-    );
+    const notes = get().notes.map((n) => (n.folder === id ? { ...n, folder: 'all' } : n));
     set({ folders, notes });
     storage.setFolders(folders);
     storage.setNotes(notes);
@@ -448,27 +463,42 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 
   // ── Sync ───────────────────────────────────────────────────────────────────
 
+  checkServerCredentials: async () => {
+    try {
+      const res = await fetch('/api/config');
+      if (res.ok) {
+        const { hasServerCredentials } = await res.json();
+        set({ hasServerCredentials: Boolean(hasServerCredentials) });
+      }
+    } catch {
+      // ignore — stays false
+    }
+  },
+
   syncWithTelegram: async () => {
-    const { settings } = get();
-    if (!settings.telegramBotToken || !settings.telegramChatId) return;
+    const { settings, hasServerCredentials } = get();
+    const hasAnyCredentials =
+      hasServerCredentials || (settings.telegramBotToken && settings.telegramChatId);
+    if (!hasAnyCredentials) return;
 
     set((state) => ({
       settings: { ...state.settings, syncStatus: 'syncing' },
     }));
 
     try {
-      const telegramNotes = await fetchAllNotes(
-        settings.telegramBotToken,
-        settings.telegramChatId
-      );
-
-      if (telegramNotes.length > 0) {
-        const localNotes = get().notes;
-        const merged = mergeNotes(localNotes, telegramNotes);
-        const withBacklinks = recomputeBacklinks(merged);
-        set({ notes: withBacklinks });
-        storage.setNotes(withBacklinks);
-        get().computeTags();
+      // API route handles fetching from Telegram using server env vars
+      const headers = buildHeaders(settings);
+      const res = await fetch('/api/notes', { headers });
+      if (res.ok) {
+        const { notes: remoteNotes } = await res.json() as { notes: Note[] };
+        if (remoteNotes && remoteNotes.length > 0) {
+          const localNotes = get().notes;
+          const merged = mergeNotes(localNotes, remoteNotes);
+          const withBacklinks = recomputeBacklinks(merged);
+          set({ notes: withBacklinks });
+          storage.setNotes(withBacklinks);
+          get().computeTags();
+        }
       }
 
       const now = new Date().toISOString();
@@ -529,7 +559,6 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     const { notes } = get();
     const fuse = buildFuse(notes.filter((n) => !n.archived));
     const results = fuse.search(q);
-
     return results.map((r) => ({
       note: r.item,
       score: r.score ?? 1,
@@ -542,7 +571,6 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 
   getFilteredNotes: () => {
     const { notes, selectedFolder, selectedTag, settings } = get();
-
     let filtered = notes.filter((n) => !n.archived);
 
     if (selectedFolder === 'starred') {
@@ -557,11 +585,9 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
       filtered = filtered.filter((n) => n.tags.includes(selectedTag));
     }
 
-    // Sort
     filtered.sort((a, b) => {
       let valA: string | number = '';
       let valB: string | number = '';
-
       switch (settings.sortBy) {
         case 'title':
           valA = a.title.toLowerCase();
@@ -579,13 +605,11 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
           valA = a.updatedAt;
           valB = b.updatedAt;
       }
-
       if (valA < valB) return settings.sortOrder === 'asc' ? -1 : 1;
       if (valA > valB) return settings.sortOrder === 'asc' ? 1 : -1;
       return 0;
     });
 
-    // Pinned notes always first (when not in starred view)
     if (selectedFolder !== 'starred') {
       filtered.sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
@@ -597,13 +621,11 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     return filtered;
   },
 
-  getNotesByFolder: (folderId) => {
-    return get().notes.filter((n) => !n.archived && n.folder === folderId);
-  },
+  getNotesByFolder: (folderId) =>
+    get().notes.filter((n) => !n.archived && n.folder === folderId),
 
-  getNotesByTag: (tag) => {
-    return get().notes.filter((n) => !n.archived && n.tags.includes(tag));
-  },
+  getNotesByTag: (tag) =>
+    get().notes.filter((n) => !n.archived && n.tags.includes(tag)),
 
   getBacklinks: (noteId) => {
     const { notes } = get();
@@ -623,19 +645,12 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 
 function mergeNotes(local: Note[], remote: Note[]): Note[] {
   const map = new Map<string, Note>();
-
-  // Add local notes
-  for (const note of local) {
-    map.set(note.id, note);
-  }
-
-  // Merge remote notes (newer wins)
+  for (const note of local) map.set(note.id, note);
   for (const note of remote) {
     const existing = map.get(note.id);
     if (!existing || note.updatedAt > existing.updatedAt) {
       map.set(note.id, note);
     }
   }
-
   return Array.from(map.values());
 }
