@@ -341,13 +341,17 @@ export default function Editor({ note }: EditorProps) {
       'flex flex-col h-full bg-white dark:bg-surface-900 transition-all',
       isFullscreen && 'fixed inset-0 z-50'
     )}>
-      {/* Toolbar */}
-      {!isFocusMode && <Toolbar editor={editor} />}
+      {/* Toolbar – horizontally scrollable on mobile */}
+      {!isFocusMode && (
+        <div className="overflow-x-auto overflow-y-hidden flex-shrink-0 scrollbar-none">
+          <Toolbar editor={editor} />
+        </div>
+      )}
 
       {/* Main scroll area */}
       <div className={cn(
-        'flex-1 overflow-y-auto',
-        isFocusMode ? 'max-w-3xl mx-auto w-full px-8 py-12' : 'px-8 py-6'
+        'flex-1 overflow-y-auto min-h-0',
+        isFocusMode ? 'max-w-3xl mx-auto w-full px-4 md:px-8 py-12' : 'px-4 md:px-8 lg:px-16 py-6'
       )}>
         {/* Cover image */}
         {note.coverImage && (

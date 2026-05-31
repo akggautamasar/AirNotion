@@ -136,6 +136,7 @@ interface NotesStore {
   // Sync
   syncWithTelegram: () => Promise<void>;
   loadFromCache: () => void;
+  loadFromServer: () => Promise<void>;
   checkServerCredentials: () => Promise<void>;
 
   // Settings
@@ -467,11 +468,32 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     try {
       const res = await fetch('/api/config');
       if (res.ok) {
-        const { hasServerCredentials } = await res.json();
-        set({ hasServerCredentials: Boolean(hasServerCredentials) });
+        const data = await res.json() as { hasServerCredentials: boolean; authenticated: boolean };
+        set({ hasServerCredentials: Boolean(data.hasServerCredentials) });
+        if (data.authenticated) {
+          await get().loadFromServer();
+        }
       }
     } catch {
       // ignore — stays false
+    }
+  },
+
+  loadFromServer: async () => {
+    try {
+      const res = await fetch('/api/notes');
+      if (!res.ok) return;
+      const { notes: remoteNotes } = await res.json() as { notes: Note[] };
+      if (remoteNotes && remoteNotes.length > 0) {
+        const localNotes = get().notes;
+        const merged = mergeNotes(localNotes, remoteNotes);
+        const withBacklinks = recomputeBacklinks(merged);
+        set({ notes: withBacklinks });
+        storage.setNotes(withBacklinks);
+        get().computeTags();
+      }
+    } catch (err) {
+      console.error('loadFromServer failed:', err);
     }
   },
 

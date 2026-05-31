@@ -13,3 +13,11 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: TELEGRAM_INDEX_MSG_ID
+        sync: false
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false

@@ -1,59 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { saveNoteToTelegram } from '@/lib/telegram';
-import type { NotePayload } from '@/lib/types';
-
-const getBotToken = (req: NextRequest): string => {
-  return (
-    req.headers.get('x-telegram-bot-token') ||
-    process.env.TELEGRAM_BOT_TOKEN ||
-    ''
-  );
-};
-
-const getChatId = (req: NextRequest): string => {
-  return (
-    req.headers.get('x-telegram-chat-id') ||
-    process.env.TELEGRAM_CHAT_ID ||
-    ''
-  );
-};
+import { db } from '@/lib/db';
+import type { Note } from '@/lib/types';
 
 /**
  * GET /api/notes
- * Returns an empty array — client manages its own cache.
- * Use POST /api/notes to create notes and sync.
+ * Returns all notes for the authenticated user.
  */
-export async function GET() {
-  return NextResponse.json({
-    notes: [],
-    message: 'Use the client-side store to access cached notes.',
-  });
+export async function GET(req: NextRequest) {
+  try {
+    await db.ensureInit();
+
+    const userId = req.headers.get('x-user-id');
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const notes = db.getNotes(userId);
+    return NextResponse.json({ notes });
+  } catch (err) {
+    console.error('GET /api/notes error:', err);
+    return NextResponse.json({ error: 'Failed to fetch notes' }, { status: 500 });
+  }
 }
 
 /**
  * POST /api/notes
- * Create a new note and save it to Telegram.
+ * Create or update a note for the authenticated user.
  */
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json() as NotePayload;
-    const token = getBotToken(req);
-    const chatId = getChatId(req);
+    await db.ensureInit();
 
-    if (!token || !chatId) {
-      return NextResponse.json(
-        { error: 'Telegram credentials not configured' },
-        { status: 400 }
-      );
+    const userId = req.headers.get('x-user-id');
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const messageId = await saveNoteToTelegram(token, chatId, body);
-    return NextResponse.json({ note: body, messageId }, { status: 201 });
+    const note = await req.json() as Note;
+    if (!note.id) {
+      return NextResponse.json({ error: 'Note must have an id' }, { status: 400 });
+    }
+
+    await db.saveNote(userId, note);
+    return NextResponse.json({ note }, { status: 201 });
   } catch (err) {
     console.error('POST /api/notes error:', err);
-    return NextResponse.json(
-      { error: 'Failed to save note' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to save note' }, { status: 500 });
   }
 }

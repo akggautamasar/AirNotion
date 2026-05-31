@@ -71,10 +71,10 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
         exit={{ opacity: 0, y: -4 }}
         onClick={onClick}
         className={cn(
-          'group flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors border-b border-surface-100 dark:border-surface-800',
+          'group flex items-center gap-3 px-4 py-3 md:py-3 cursor-pointer transition-colors border-b border-surface-100 dark:border-surface-800 min-h-[80px] md:min-h-0',
           isActive
             ? 'bg-brand-500/10 border-l-2 border-l-brand-500'
-            : `hover:bg-surface-100 dark:hover:bg-surface-800 ${colors.bg} ${colors.bgDark}`
+            : `hover:bg-surface-100 dark:hover:bg-surface-800 active:bg-surface-100 dark:active:bg-surface-800 ${colors.bg} ${colors.bgDark}`
         )}
         onMouseEnter={() => setShowActions(true)}
         onMouseLeave={() => { setShowActions(false); setShowColorPicker(false); }}
@@ -89,11 +89,11 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <p className="text-sm font-medium text-surface-900 dark:text-surface-100 truncate">
+            <p className="text-sm md:text-sm font-medium text-surface-900 dark:text-surface-100 truncate">
               {note.title || <span className="text-surface-400 italic">Untitled</span>}
             </p>
             {note.tags.slice(0, 2).map((tag) => (
-              <span key={tag} className="text-xs px-1.5 py-0.5 rounded-full bg-surface-100 dark:bg-surface-700 text-surface-500 dark:text-surface-400 flex-shrink-0">
+              <span key={tag} className="text-xs px-1.5 py-0.5 rounded-full bg-surface-100 dark:bg-surface-700 text-surface-500 dark:text-surface-400 flex-shrink-0 hidden sm:inline">
                 #{tag}
               </span>
             ))}
@@ -103,17 +103,20 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
               {truncate(note.plainText, 80)}
             </p>
           )}
+          <p className="text-xs text-surface-400 mt-1 md:hidden">
+            {formatRelativeTime(note.updatedAt)}
+          </p>
         </div>
 
-        {/* Date */}
-        <span className="text-xs text-surface-400 flex-shrink-0">
+        {/* Date — hidden on mobile (shown inline above) */}
+        <span className="text-xs text-surface-400 flex-shrink-0 hidden md:block">
           {formatRelativeTime(note.updatedAt)}
         </span>
 
-        {/* Actions */}
+        {/* Actions — always visible on mobile, hover-only on desktop */}
         <div className={cn(
           'flex items-center gap-0.5 flex-shrink-0 transition-opacity',
-          showActions ? 'opacity-100' : 'opacity-0'
+          'opacity-100 md:opacity-0 md:group-hover:opacity-100'
         )}>
           <ActionBtn onClick={handlePin} title={note.pinned ? 'Unpin' : 'Pin'}>
             <Star size={13} className={cn(note.pinned && 'fill-yellow-500 text-yellow-500')} />

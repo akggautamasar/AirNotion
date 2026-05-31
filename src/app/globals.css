@@ -499,6 +499,15 @@ main {
 }
 
 /* ─── Utility classes ────────────────────────────────────────────────────────── */
+/* Hide scrollbar while allowing scroll */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 .animate-fade-in { animation: fadeIn 0.15s ease-out; }
 .animate-slide-up { animation: slideUp 0.2s ease-out; }
 .animate-scale-in { animation: scaleIn 0.15s ease-out; }

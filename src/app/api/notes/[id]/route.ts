@@ -1,45 +1,56 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { updateNoteInTelegram, deleteNoteFromTelegram } from '@/lib/telegram';
+import { db } from '@/lib/db';
 import type { Note } from '@/lib/types';
 
 interface RouteParams {
   params: { id: string };
 }
 
-const getBotToken = (req: NextRequest): string =>
-  req.headers.get('x-telegram-bot-token') || process.env.TELEGRAM_BOT_TOKEN || '';
-
-const getChatId = (req: NextRequest): string =>
-  req.headers.get('x-telegram-chat-id') || process.env.TELEGRAM_CHAT_ID || '';
-
 /**
  * GET /api/notes/[id]
- * Returns the note ID — full note data lives in client cache.
+ * Returns a single note for the authenticated user.
  */
-export async function GET(_req: NextRequest, { params }: RouteParams) {
-  return NextResponse.json({ id: params.id });
+export async function GET(req: NextRequest, { params }: RouteParams) {
+  try {
+    await db.ensureInit();
+
+    const userId = req.headers.get('x-user-id');
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const note = db.getNote(userId, params.id);
+    if (!note) {
+      return NextResponse.json({ error: 'Note not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ note });
+  } catch (err) {
+    console.error(`GET /api/notes/${params.id} error:`, err);
+    return NextResponse.json({ error: 'Failed to fetch note' }, { status: 500 });
+  }
 }
 
 /**
  * PUT /api/notes/[id]
- * Update a note in Telegram (delete old + send new).
+ * Update a note in the database.
  */
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   try {
-    const body = await req.json() as Note;
-    const token = getBotToken(req);
-    const chatId = getChatId(req);
+    await db.ensureInit();
 
-    if (!token || !chatId) {
-      return NextResponse.json({ error: 'Telegram credentials not configured' }, { status: 400 });
+    const userId = req.headers.get('x-user-id');
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const body = await req.json() as Note;
     if (body.id !== params.id) {
       return NextResponse.json({ error: 'ID mismatch' }, { status: 400 });
     }
 
-    const newMessageId = await updateNoteInTelegram(token, chatId, body);
-    return NextResponse.json({ note: { ...body, telegramMessageId: newMessageId } });
+    await db.saveNote(userId, body);
+    return NextResponse.json({ note: body });
   } catch (err) {
     console.error(`PUT /api/notes/${params.id} error:`, err);
     return NextResponse.json({ error: 'Failed to update note' }, { status: 500 });
@@ -48,25 +59,18 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
 
 /**
  * DELETE /api/notes/[id]
- * Delete a note from Telegram.
+ * Delete a note from the database.
  */
 export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
-    const { searchParams } = new URL(req.url);
-    const messageIdStr = searchParams.get('messageId');
-    const messageId = messageIdStr ? parseInt(messageIdStr, 10) : null;
+    await db.ensureInit();
 
-    const token = getBotToken(req);
-    const chatId = getChatId(req);
-
-    if (!token || !chatId) {
-      return NextResponse.json({ error: 'Telegram credentials not configured' }, { status: 400 });
+    const userId = req.headers.get('x-user-id');
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    if (messageId) {
-      await deleteNoteFromTelegram(token, chatId, messageId);
-    }
-
+    await db.deleteNote(userId, params.id);
     return NextResponse.json({ success: true, id: params.id });
   } catch (err) {
     console.error(`DELETE /api/notes/${params.id} error:`, err);

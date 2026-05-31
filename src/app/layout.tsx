@@ -45,6 +45,7 @@ function ThemeProvider({ children }: { children: ReactNode }) {
 
 function StoreInitializer() {
   const loadFromCache = useNotesStore((s) => s.loadFromCache);
+  const loadFromServer = useNotesStore((s) => s.loadFromServer);
   const checkServerCredentials = useNotesStore((s) => s.checkServerCredentials);
   const [initialized, setInitialized] = useState(false);
 
@@ -52,9 +53,10 @@ function StoreInitializer() {
     if (!initialized) {
       loadFromCache();
       checkServerCredentials();
+      loadFromServer();
       setInitialized(true);
     }
-  }, [initialized, loadFromCache, checkServerCredentials]);
+  }, [initialized, loadFromCache, loadFromServer, checkServerCredentials]);
 
   return null;
 }
