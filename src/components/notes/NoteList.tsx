@@ -431,6 +431,20 @@ function EmptyState({
     );
   }
 
+  if (selectedFolder === 'starred') {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+        <div className="w-12 h-12 bg-yellow-50 dark:bg-yellow-900/20 rounded-xl flex items-center justify-center mb-3">
+          <span className="text-2xl">⭐</span>
+        </div>
+        <p className="text-sm font-medium text-surface-600 dark:text-surface-400">No starred notes</p>
+        <p className="text-xs text-surface-400 dark:text-surface-500 mt-1 max-w-xs">
+          Pin notes to star them. Use the pin button on any note card to add it here.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
       <div className="w-12 h-12 bg-surface-100 dark:bg-surface-800 rounded-xl flex items-center justify-center mb-3">

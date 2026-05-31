@@ -124,6 +124,8 @@ interface NotesStore {
   restoreNote: (id: string) => Promise<void>;
   setNoteColor: (id: string, color: NoteColor) => Promise<void>;
   setNoteStatus: (id: string, status: Note['status']) => Promise<void>;
+  moveNoteToFolder: (noteId: string, folderId: string) => Promise<void>;
+  setNoteLock: (id: string, pin: string | null) => Promise<void>;
 
   // Folder actions
   createFolder: (name: string, icon?: string, color?: string) => void;
@@ -239,9 +241,12 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   },
 
   createNote: async (partial = {}) => {
-    const { settings, notes } = get();
+    const { settings, notes, selectedFolder } = get();
+    const folderForNote = (selectedFolder && !['all', 'starred', 'archived'].includes(selectedFolder))
+      ? selectedFolder
+      : (settings.defaultFolder || 'all');
     const note = createDefaultNote({
-      folder: settings.defaultFolder || 'all',
+      folder: folderForNote,
       ...partial,
     });
 
@@ -441,6 +446,14 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 
   setNoteStatus: async (id, status) => {
     await get().updateNote(id, { status });
+  },
+
+  moveNoteToFolder: async (noteId, folderId) => {
+    await get().updateNote(noteId, { folder: folderId });
+  },
+
+  setNoteLock: async (id, pin) => {
+    await get().updateNote(id, { locked: pin !== null, lockPin: pin ?? undefined });
   },
 
   // ── Folder actions ─────────────────────────────────────────────────────────

@@ -27,12 +27,14 @@ import { useNotesStore } from '@/store/notesStore';
 import { cn, formatRelativeTime, formatBytes } from '@/lib/utils';
 import { storage } from '@/lib/storage';
 import toast from 'react-hot-toast';
+import FolderModal from '@/components/ui/FolderModal';
 
 interface SidebarProps {
   onClose?: () => void;
+  onNavigate?: () => void;
 }
 
-export default function Sidebar({ onClose }: SidebarProps) {
+export default function Sidebar({ onClose, onNavigate }: SidebarProps) {
   const {
     notes,
     folders,
@@ -55,9 +57,9 @@ export default function Sidebar({ onClose }: SidebarProps) {
 
   const [foldersExpanded, setFoldersExpanded] = useState(true);
   const [tagsExpanded, setTagsExpanded] = useState(true);
-  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
-  const [editingFolderName, setEditingFolderName] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [folderModalOpen, setFolderModalOpen] = useState(false);
+  const [editingFolderForModal, setEditingFolderForModal] = useState<{ id: string; name: string; icon: string; color: string } | null>(null);
 
   const activeNoteCount = notes.filter((n) => !n.archived).length;
   const pinnedCount = notes.filter((n) => n.pinned && !n.archived).length;
@@ -72,12 +74,21 @@ export default function Sidebar({ onClose }: SidebarProps) {
   }, [createNote, setActiveNote, onClose]);
 
   const handleNewFolder = useCallback(() => {
-    const name = prompt('Folder name:');
-    if (name?.trim()) {
-      createFolder(name.trim());
-      toast.success(`Folder "${name.trim()}" created`);
+    setEditingFolderForModal(null);
+    setFolderModalOpen(true);
+  }, []);
+
+  const handleFolderModalSubmit = useCallback((name: string, icon: string, color: string) => {
+    if (editingFolderForModal) {
+      updateFolder(editingFolderForModal.id, { name, icon, color });
+      toast.success(`Folder updated`);
+    } else {
+      createFolder(name, icon, color);
+      toast.success(`Folder "${name}" created`);
     }
-  }, [createFolder]);
+    setFolderModalOpen(false);
+    setEditingFolderForModal(null);
+  }, [editingFolderForModal, createFolder, updateFolder]);
 
   const handleSync = useCallback(async () => {
     if (!settings.telegramBotToken || !settings.telegramChatId) {
@@ -96,23 +107,14 @@ export default function Sidebar({ onClose }: SidebarProps) {
     }
   }, [settings, syncWithTelegram, openSettings]);
 
-  const startEditFolder = (id: string, name: string) => {
-    setEditingFolderId(id);
-    setEditingFolderName(name);
-  };
-
-  const saveEditFolder = () => {
-    if (editingFolderId && editingFolderName.trim()) {
-      updateFolder(editingFolderId, { name: editingFolderName.trim() });
-    }
-    setEditingFolderId(null);
+  const startEditFolder = (id: string, name: string, icon: string, color: string) => {
+    setEditingFolderForModal({ id, name, icon, color });
+    setFolderModalOpen(true);
   };
 
   const handleDeleteFolder = (id: string, name: string) => {
-    if (confirm(`Delete folder "${name}"? Notes inside will be moved to All Notes.`)) {
-      deleteFolder(id);
-      toast.success('Folder deleted');
-    }
+    deleteFolder(id);
+    toast.success(`Folder "${name}" deleted`);
   };
 
   const navItems = [
@@ -177,7 +179,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
             label={item.label}
             count={item.count}
             active={selectedFolder === item.id && !selectedTag}
-            onClick={() => { setSelectedFolder(item.id); setSelectedTag(null); onClose?.(); }}
+            onClick={() => { setSelectedFolder(item.id); setSelectedTag(null); onNavigate?.() || onClose?.(); }}
           />
         ))}
 
@@ -222,53 +224,37 @@ export default function Sidebar({ onClose }: SidebarProps) {
                 ) : (
                   folders.map((folder) => (
                     <div key={folder.id} className="group">
-                      {editingFolderId === folder.id ? (
-                        <div className="flex items-center gap-1 px-2 py-1">
-                          <input
-                            autoFocus
-                            value={editingFolderName}
-                            onChange={(e) => setEditingFolderName(e.target.value)}
-                            onBlur={saveEditFolder}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') saveEditFolder();
-                              if (e.key === 'Escape') setEditingFolderId(null);
-                            }}
-                            className="flex-1 text-sm bg-white dark:bg-surface-800 border border-brand-500 rounded px-2 py-0.5 outline-none text-surface-900 dark:text-white"
-                          />
+                      <div
+                        className={cn(
+                          'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors',
+                          selectedFolder === folder.id && !selectedTag
+                            ? 'bg-brand-500/10 text-brand-600 dark:text-brand-400'
+                            : 'text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800'
+                        )}
+                        onClick={() => { setSelectedFolder(folder.id); setSelectedTag(null); onNavigate?.() || onClose?.(); }}
+                      >
+                        <span className="text-base flex-shrink-0" style={{ fontSize: '14px' }}>
+                          {folder.icon}
+                        </span>
+                        <span className="flex-1 text-sm truncate">{folder.name}</span>
+                        <span className="text-xs text-surface-400 flex-shrink-0">
+                          {notes.filter(n => !n.archived && n.folder === folder.id).length}
+                        </span>
+                        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); startEditFolder(folder.id, folder.name, folder.icon, folder.color); }}
+                            className="p-0.5 rounded hover:bg-surface-200 dark:hover:bg-surface-700"
+                          >
+                            <Pencil size={11} />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteFolder(folder.id, folder.name); }}
+                            className="p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-400"
+                          >
+                            <Trash2 size={11} />
+                          </button>
                         </div>
-                      ) : (
-                        <div
-                          className={cn(
-                            'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors',
-                            selectedFolder === folder.id && !selectedTag
-                              ? 'bg-brand-500/10 text-brand-600 dark:text-brand-400'
-                              : 'text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800'
-                          )}
-                          onClick={() => { setSelectedFolder(folder.id); setSelectedTag(null); onClose?.(); }}
-                        >
-                          <span className="text-base flex-shrink-0" style={{ fontSize: '14px' }}>
-                            {folder.icon}
-                          </span>
-                          <span className="flex-1 text-sm truncate">{folder.name}</span>
-                          <span className="text-xs text-surface-400 flex-shrink-0">
-                            {notes.filter(n => !n.archived && n.folder === folder.id).length}
-                          </span>
-                          <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); startEditFolder(folder.id, folder.name); }}
-                              className="p-0.5 rounded hover:bg-surface-200 dark:hover:bg-surface-700"
-                            >
-                              <Pencil size={11} />
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleDeleteFolder(folder.id, folder.name); }}
-                              className="p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-400"
-                            >
-                              <Trash2 size={11} />
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                      </div>
                     </div>
                   ))
                 )}
@@ -303,7 +289,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
                       {tags.map((tag) => (
                         <button
                           key={tag.id}
-                          onClick={() => { setSelectedTag(selectedTag === tag.name ? null : tag.name); onClose?.(); }}
+                          onClick={() => { setSelectedTag(selectedTag === tag.name ? null : tag.name); onNavigate?.() || onClose?.(); }}
                           className={cn(
                             'flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors',
                             selectedTag === tag.name
@@ -360,6 +346,17 @@ export default function Sidebar({ onClose }: SidebarProps) {
           Settings
         </button>
       </div>
+
+      {/* Folder Modal */}
+      <FolderModal
+        isOpen={folderModalOpen}
+        onClose={() => { setFolderModalOpen(false); setEditingFolderForModal(null); }}
+        onSubmit={handleFolderModalSubmit}
+        initialName={editingFolderForModal?.name ?? ''}
+        initialIcon={editingFolderForModal?.icon ?? '📁'}
+        initialColor={editingFolderForModal?.color ?? '#6366f1'}
+        title={editingFolderForModal ? 'Edit Folder' : 'New Folder'}
+      />
     </aside>
   );
 }

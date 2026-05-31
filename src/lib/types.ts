@@ -21,6 +21,8 @@ export interface Note {
   status?: 'todo' | 'in-progress' | 'done'; // for Kanban
   dueDate?: string;
   reminder?: string;
+  locked?: boolean;
+  lockPin?: string;
 }
 
 export type NoteColor =

@@ -137,7 +137,10 @@ export default function AppLayout() {
                 transition={{ type: 'spring', damping: 25, stiffness: 300 }}
                 className="fixed left-0 top-0 h-full w-72 z-40"
               >
-                <Sidebar onClose={() => setMobileSidebarOpen(false)} />
+                <Sidebar
+                  onClose={() => setMobileSidebarOpen(false)}
+                  onNavigate={() => { setMobileSidebarOpen(false); setMobileView('list'); }}
+                />
               </motion.div>
             </>
           )}
@@ -234,7 +237,10 @@ export default function AppLayout() {
                 transition={{ type: 'spring', damping: 25, stiffness: 300 }}
                 className="fixed left-0 top-0 h-full w-72 z-40"
               >
-                <Sidebar onClose={() => setMobileSidebarOpen(false)} />
+                <Sidebar
+                  onClose={() => setMobileSidebarOpen(false)}
+                  onNavigate={() => { setMobileSidebarOpen(false); setMobileView('list'); }}
+                />
               </motion.div>
             </>
           )}
