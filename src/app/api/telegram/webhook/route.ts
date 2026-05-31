@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
     } else if (text === '/notes') {
       const user = db.getUserByTelegramId(telegramId);
       if (user) {
-        const notes = db.getNotes(user.id);
+        const notes = db.getNotesMeta(user.id);
         const count = notes.length;
         const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
         if (BOT_TOKEN) {
