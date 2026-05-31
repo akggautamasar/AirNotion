@@ -151,16 +151,26 @@ interface EditorProps {
 }
 
 export default function Editor({ note }: EditorProps) {
-  const { updateNote, settings, notes } = useNotesStore();
+  const { updateNote, fetchNoteContent, settings, notes } = useNotesStore();
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(settings.focusMode);
   const [showBacklinks, setShowBacklinks] = useState(false);
   const [localTitle, setLocalTitle] = useState(note.title);
   const [localTags, setLocalTags] = useState(note.tags.join(', '));
   const [showTagInput, setShowTagInput] = useState(false);
+  const [isLoadingContent, setIsLoadingContent] = useState(note.content === '');
   const titleRef = useRef<HTMLInputElement>(null);
   const isSavingRef = useRef(false);
   const lastSavedContentRef = useRef(note.content);
+
+  // Fetch full content from Telegram on demand if not yet loaded
+  useEffect(() => {
+    if (note.content === '') {
+      setIsLoadingContent(true);
+      fetchNoteContent(note.id).finally(() => setIsLoadingContent(false));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note.id]);
 
   // Debounced save
   const debouncedSave = useCallback(
@@ -425,8 +435,15 @@ export default function Editor({ note }: EditorProps) {
           </div>
         </div>
 
-        {/* Editor content */}
-        <EditorContent editor={editor} className="min-h-96" />
+        {/* Loading state while fetching content from Telegram */}
+        {isLoadingContent ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
+            <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-surface-400">Loading note from Telegram…</p>
+          </div>
+        ) : (
+          <EditorContent editor={editor} className="min-h-96" />
+        )}
 
         {/* Backlinks */}
         {backlinks.length > 0 && (

@@ -114,6 +114,7 @@ interface NotesStore {
 
   // Note actions
   setActiveNote: (id: string | null) => void;
+  fetchNoteContent: (id: string) => Promise<void>; // lazy-loads content from Telegram
   createNote: (partial?: Partial<Note>) => Promise<Note>;
   updateNote: (id: string, updates: Partial<Note>) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
@@ -220,6 +221,22 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
   // ── Note actions ──────────────────────────────────────────────────────────
 
   setActiveNote: (id) => set({ activeNoteId: id }),
+
+  // Fetch full note content from Telegram via the API (content is not stored in server RAM)
+  fetchNoteContent: async (id) => {
+    const existing = get().notes.find((n) => n.id === id);
+    if (!existing || existing.content !== '') return; // already loaded
+    try {
+      const res = await fetch(`/api/notes/${id}`);
+      if (!res.ok) return;
+      const { note } = await res.json() as { note: Note };
+      const notes = get().notes.map((n) => n.id === id ? { ...n, ...note } : n);
+      set({ notes });
+      storage.setNotes(notes);
+    } catch (err) {
+      console.error('fetchNoteContent failed:', err);
+    }
+  },
 
   createNote: async (partial = {}) => {
     const { settings, notes } = get();

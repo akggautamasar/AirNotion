@@ -8,21 +8,17 @@ interface RouteParams {
 
 /**
  * GET /api/notes/[id]
- * Returns a single note for the authenticated user.
+ * Downloads full note content from Telegram on demand.
+ * This is the only place note content is read — it is never stored in server RAM.
  */
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     await db.ensureInit();
-
     const userId = req.headers.get('x-user-id');
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const note = db.getNote(userId, params.id);
-    if (!note) {
-      return NextResponse.json({ error: 'Note not found' }, { status: 404 });
-    }
+    const note = await db.getNote(userId, params.id);
+    if (!note) return NextResponse.json({ error: 'Note not found' }, { status: 404 });
 
     return NextResponse.json({ note });
   } catch (err) {
@@ -33,24 +29,19 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
 /**
  * PUT /api/notes/[id]
- * Update a note in the database.
+ * Re-uploads note content to Telegram, updates the metadata index.
  */
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   try {
     await db.ensureInit();
-
     const userId = req.headers.get('x-user-id');
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json() as Note;
-    if (body.id !== params.id) {
-      return NextResponse.json({ error: 'ID mismatch' }, { status: 400 });
-    }
+    if (body.id !== params.id) return NextResponse.json({ error: 'ID mismatch' }, { status: 400 });
 
-    await db.saveNote(userId, body);
-    return NextResponse.json({ note: body });
+    const meta = await db.saveNote(userId, body);
+    return NextResponse.json({ note: meta });
   } catch (err) {
     console.error(`PUT /api/notes/${params.id} error:`, err);
     return NextResponse.json({ error: 'Failed to update note' }, { status: 500 });
@@ -59,16 +50,14 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
 
 /**
  * DELETE /api/notes/[id]
- * Delete a note from the database.
+ * Removes note from the metadata index. The Telegram document remains
+ * but becomes unreferenced (Telegram auto-expires old files eventually).
  */
 export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
     await db.ensureInit();
-
     const userId = req.headers.get('x-user-id');
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     await db.deleteNote(userId, params.id);
     return NextResponse.json({ success: true, id: params.id });

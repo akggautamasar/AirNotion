@@ -1,4 +1,4 @@
-import type { Note, Folder } from '@/lib/types';
+import type { Note, Folder, NoteColor } from '@/lib/types';
 import { generateId } from '@/lib/utils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -13,26 +13,45 @@ export interface TGUser {
   lastLogin: string;
 }
 
+// Metadata only — no content. Content lives exclusively in Telegram as a file.
+export interface NoteIndex {
+  id: string;
+  title: string;
+  tags: string[];
+  folder: string;
+  pinned: boolean;
+  archived: boolean;
+  color: NoteColor;
+  status?: 'todo' | 'in-progress' | 'done';
+  wordCount: number;
+  charCount: number;
+  updatedAt: string;
+  createdAt: string;
+  fileId: string; // Telegram file_id — used to download full content on demand
+}
+
 interface LoginCode {
   telegramId: number;
   expiresAt: number;
 }
 
+// Only metadata lives in memory. Content is fetched from Telegram when needed.
+// This keeps Render memory usage minimal regardless of note count/size.
 interface DbState {
   version: number;
-  users: Record<string, TGUser>;
-  notes: Record<string, Record<string, Note>>;
-  folders: Record<string, Folder[]>;
-  loginCodes: Record<string, LoginCode>;
+  users: Record<string, TGUser>;             // telegramId -> user
+  noteIndex: Record<string, Record<string, NoteIndex>>; // userId -> noteId -> meta
+  folders: Record<string, Folder[]>;         // userId -> folders
+  loginCodes: Record<string, LoginCode>;     // code -> entry
   indexMessageId?: number;
 }
 
 // ─── Telegram API helpers ─────────────────────────────────────────────────────
 
-const TG_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+const TG_API = () => `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
 
 async function tgRequest(method: string, data?: Record<string, unknown>): Promise<unknown> {
-  const res = await fetch(`${TG_API}/${method}`, {
+  const res = await fetch(`${TG_API()}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: data ? JSON.stringify(data) : undefined,
@@ -47,28 +66,23 @@ async function sendMessage(
   text: string,
   parseMode?: 'Markdown' | 'HTML'
 ): Promise<{ message_id: number }> {
-  const body: Record<string, unknown> = {
-    chat_id: chatId,
-    text,
-    disable_notification: true,
-  };
+  const body: Record<string, unknown> = { chat_id: chatId, text, disable_notification: true };
   if (parseMode) body.parse_mode = parseMode;
   return tgRequest('sendMessage', body) as Promise<{ message_id: number }>;
 }
 
 async function sendDocument(
   chatId: number | string,
-  jsonBlob: Blob,
+  blob: Blob,
   filename: string,
   caption: string
 ): Promise<{ message_id: number; document: { file_id: string } }> {
-  const formData = new FormData();
-  formData.append('chat_id', String(chatId));
-  formData.append('document', jsonBlob, filename);
-  formData.append('caption', caption);
-  formData.append('disable_notification', 'true');
-
-  const res = await fetch(`${TG_API}/sendDocument`, { method: 'POST', body: formData });
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  form.append('document', blob, filename);
+  form.append('caption', caption);
+  form.append('disable_notification', 'true');
+  const res = await fetch(`${TG_API()}/sendDocument`, { method: 'POST', body: form });
   const json = await res.json() as { ok: boolean; result: { message_id: number; document: { file_id: string } }; description?: string };
   if (!json.ok) throw new Error(`Telegram sendDocument error: ${json.description}`);
   return json.result;
@@ -79,11 +93,7 @@ async function editMessageText(
   messageId: number,
   text: string
 ): Promise<void> {
-  await tgRequest('editMessageText', {
-    chat_id: chatId,
-    message_id: messageId,
-    text,
-  });
+  await tgRequest('editMessageText', { chat_id: chatId, message_id: messageId, text });
 }
 
 async function forwardMessage(
@@ -102,9 +112,7 @@ async function forwardMessage(
 async function deleteMessage(chatId: number | string, messageId: number): Promise<void> {
   try {
     await tgRequest('deleteMessage', { chat_id: chatId, message_id: messageId });
-  } catch {
-    // Ignore deletion errors
-  }
+  } catch { /* ignore */ }
 }
 
 async function getFile(fileId: string): Promise<{ file_path: string }> {
@@ -129,7 +137,7 @@ class AirNotionDb {
   private state: DbState = {
     version: 1,
     users: {},
-    notes: {},
+    noteIndex: {},
     folders: {},
     loginCodes: {},
   };
@@ -149,7 +157,7 @@ class AirNotionDb {
 
   async init(): Promise<void> {
     if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
-      console.warn('[db] TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set — running with empty in-memory state');
+      console.warn('[db] Telegram credentials not set — running with empty in-memory state');
       this.initialized = true;
       return;
     }
@@ -160,7 +168,6 @@ class AirNotionDb {
 
     if (indexMsgId) {
       try {
-        // Forward the index message to ourselves to read its text
         const forwarded = await forwardMessage(this.chatId, this.chatId, indexMsgId);
         const text = forwarded.text || '';
         await deleteMessage(this.chatId, forwarded.message_id);
@@ -168,9 +175,7 @@ class AirNotionDb {
         const PREFIX = 'AIRNOTION_INDEX:';
         if (text.startsWith(PREFIX)) {
           const fileId = text.slice(PREFIX.length).trim();
-          if (fileId) {
-            await this.loadStateFromFileId(fileId);
-          }
+          if (fileId) await this.loadStateFromFileId(fileId);
         }
         this.state.indexMessageId = indexMsgId;
       } catch (err) {
@@ -178,7 +183,6 @@ class AirNotionDb {
         this.state.indexMessageId = indexMsgId;
       }
     } else {
-      // Create a fresh index message
       try {
         const msg = await sendMessage(this.chatId, 'AIRNOTION_INDEX:');
         this.state.indexMessageId = msg.message_id;
@@ -201,52 +205,50 @@ class AirNotionDb {
         ...this.state,
         version: data.version ?? 1,
         users: data.users ?? {},
-        notes: data.notes ?? {},
+        noteIndex: data.noteIndex ?? {},
         folders: data.folders ?? {},
         loginCodes: {},
       };
-      console.log('[db] State restored from Telegram');
+      console.log('[db] State (index only) restored from Telegram');
     } catch (err) {
       console.error('[db] Failed to load state from file:', err);
     }
   }
 
+  // Save only the metadata index to Telegram — note content is NOT in memory
   async saveState(): Promise<void> {
     if (!process.env.TELEGRAM_BOT_TOKEN || !this.state.indexMessageId) return;
     try {
       const snapshot = {
         version: this.state.version,
         users: this.state.users,
-        notes: this.state.notes,
+        noteIndex: this.state.noteIndex,
         folders: this.state.folders,
       };
-      const json = JSON.stringify(snapshot);
-      const blob = new Blob([json], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(snapshot)], { type: 'application/json' });
       const result = await sendDocument(
         this.chatId,
         blob,
-        `airnotion_state_${Date.now()}.json`,
+        `airnotion_index_${Date.now()}.json`,
         `AIRNOTION_STATE:${new Date().toISOString()}`
       );
-      const fileId = result.document.file_id;
-      await editMessageText(this.chatId, this.state.indexMessageId, `AIRNOTION_INDEX:${fileId}`);
+      await editMessageText(
+        this.chatId,
+        this.state.indexMessageId,
+        `AIRNOTION_INDEX:${result.document.file_id}`
+      );
     } catch (err) {
       console.error('[db] Failed to save state to Telegram:', err);
     }
   }
 
-  // ── OTP ──────────────────────────────────────────────────────────────────────
+  // ── OTP ───────────────────────────────────────────────────────────────────────
 
   generateOTP(telegramId: number): string {
-    // Clean up expired codes
     const now = Date.now();
     for (const [code, entry] of Object.entries(this.state.loginCodes)) {
-      if (entry.expiresAt < now) {
-        delete this.state.loginCodes[code];
-      }
+      if (entry.expiresAt < now) delete this.state.loginCodes[code];
     }
-
-    // Generate unique 6-digit code
     let code: string;
     let attempts = 0;
     do {
@@ -254,11 +256,7 @@ class AirNotionDb {
       attempts++;
     } while (this.state.loginCodes[code] && attempts < 20);
 
-    this.state.loginCodes[code] = {
-      telegramId,
-      expiresAt: now + 5 * 60 * 1000,
-    };
-
+    this.state.loginCodes[code] = { telegramId, expiresAt: now + 5 * 60 * 1000 };
     return code;
   }
 
@@ -289,7 +287,6 @@ class AirNotionDb {
       if (lastName !== undefined) existing.lastName = lastName;
       return existing;
     }
-
     const user: TGUser = {
       id: generateId(),
       telegramId,
@@ -311,27 +308,68 @@ class AirNotionDb {
     return this.state.users[String(telegramId)] || null;
   }
 
-  // ── Notes ─────────────────────────────────────────────────────────────────────
+  // ── Notes (index only in memory, content in Telegram) ────────────────────────
 
-  getNotes(userId: string): Note[] {
-    return Object.values(this.state.notes[userId] || {});
+  // Returns metadata list — content field will be empty string (fetched on demand)
+  getNotesMeta(userId: string): NoteIndex[] {
+    return Object.values(this.state.noteIndex[userId] || {});
   }
 
-  getNote(userId: string, noteId: string): Note | null {
-    return this.state.notes[userId]?.[noteId] || null;
+  getNoteIndex(userId: string, noteId: string): NoteIndex | null {
+    return this.state.noteIndex[userId]?.[noteId] || null;
   }
 
-  async saveNote(userId: string, note: Note): Promise<void> {
-    if (!this.state.notes[userId]) {
-      this.state.notes[userId] = {};
-    }
-    this.state.notes[userId][note.id] = note;
+  // Upload full note content to Telegram, store only metadata in memory
+  async saveNote(userId: string, note: Note): Promise<NoteIndex> {
+    const blob = new Blob([JSON.stringify(note)], { type: 'application/json' });
+    const result = await sendDocument(
+      this.chatId,
+      blob,
+      `note_${note.id}.json`,
+      `AIRNOTION_NOTE:${userId}:${note.id}`
+    );
+    const fileId = result.document.file_id;
+
+    const meta: NoteIndex = {
+      id: note.id,
+      title: note.title,
+      tags: note.tags,
+      folder: note.folder,
+      pinned: note.pinned,
+      archived: note.archived,
+      color: note.color,
+      status: note.status,
+      wordCount: note.wordCount,
+      charCount: note.charCount,
+      updatedAt: note.updatedAt,
+      createdAt: note.createdAt,
+      fileId,
+    };
+
+    if (!this.state.noteIndex[userId]) this.state.noteIndex[userId] = {};
+    this.state.noteIndex[userId][note.id] = meta;
     await this.saveState();
+    return meta;
+  }
+
+  // Download full note content from Telegram on demand
+  async getNote(userId: string, noteId: string): Promise<Note | null> {
+    const meta = this.state.noteIndex[userId]?.[noteId];
+    if (!meta) return null;
+    try {
+      const fileInfo = await getFile(meta.fileId);
+      const url = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${fileInfo.file_path}`;
+      const res = await fetch(url);
+      return await res.json() as Note;
+    } catch (err) {
+      console.error('[db] Failed to download note content:', err);
+      return null;
+    }
   }
 
   async deleteNote(userId: string, noteId: string): Promise<void> {
-    if (this.state.notes[userId]) {
-      delete this.state.notes[userId][noteId];
+    if (this.state.noteIndex[userId]) {
+      delete this.state.noteIndex[userId][noteId];
     }
     await this.saveState();
   }
@@ -347,7 +385,7 @@ class AirNotionDb {
     await this.saveState();
   }
 
-  // ── Telegram messaging for auth ───────────────────────────────────────────────
+  // ── OTP messaging ─────────────────────────────────────────────────────────────
 
   async sendOTPMessage(chatId: number, code: string): Promise<void> {
     await sendMessage(
@@ -358,6 +396,5 @@ class AirNotionDb {
   }
 }
 
-// Use globalThis to survive hot reloads in dev
 export const db: AirNotionDb =
   globalThis.__airnotionDb ?? (globalThis.__airnotionDb = new AirNotionDb());
