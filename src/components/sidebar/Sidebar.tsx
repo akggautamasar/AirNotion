@@ -78,12 +78,12 @@ export default function Sidebar({ onClose, onNavigate }: SidebarProps) {
     setFolderModalOpen(true);
   }, []);
 
-  const handleFolderModalSubmit = useCallback((name: string, icon: string, color: string) => {
+  const handleFolderModalSubmit = useCallback((name: string, icon: string, color: string, parentId?: string) => {
     if (editingFolderForModal) {
       updateFolder(editingFolderForModal.id, { name, icon, color });
       toast.success(`Folder updated`);
     } else {
-      createFolder(name, icon, color);
+      createFolder(name, icon, color, parentId);
       toast.success(`Folder "${name}" created`);
     }
     setFolderModalOpen(false);
@@ -222,41 +222,34 @@ export default function Sidebar({ onClose, onNavigate }: SidebarProps) {
                     Add a folder
                   </button>
                 ) : (
-                  folders.map((folder) => (
-                    <div key={folder.id} className="group">
-                      <div
-                        className={cn(
-                          'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors',
-                          selectedFolder === folder.id && !selectedTag
-                            ? 'bg-brand-500/10 text-brand-600 dark:text-brand-400'
-                            : 'text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800'
-                        )}
-                        onClick={() => { setSelectedFolder(folder.id); onNavigate?.() || onClose?.(); }}
-                      >
-                        <span className="text-base flex-shrink-0" style={{ fontSize: '14px' }}>
-                          {folder.icon}
-                        </span>
-                        <span className="flex-1 text-sm truncate">{folder.name}</span>
-                        <span className="text-xs text-surface-400 flex-shrink-0">
-                          {notes.filter(n => !n.archived && n.folder === folder.id).length}
-                        </span>
-                        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); startEditFolder(folder.id, folder.name, folder.icon, folder.color); }}
-                            className="p-0.5 rounded hover:bg-surface-200 dark:hover:bg-surface-700"
-                          >
-                            <Pencil size={11} />
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleDeleteFolder(folder.id, folder.name); }}
-                            className="p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-400"
-                          >
-                            <Trash2 size={11} />
-                          </button>
-                        </div>
+                  <>
+                    {/* Root folders */}
+                    {folders.filter(f => !f.parentId).map((folder) => (
+                      <div key={folder.id}>
+                        <FolderRow
+                          folder={folder}
+                          isActive={selectedFolder === folder.id && !selectedTag}
+                          noteCount={notes.filter(n => !n.archived && n.folder === folder.id).length}
+                          onSelect={() => { setSelectedFolder(folder.id); onNavigate?.() || onClose?.(); }}
+                          onEdit={() => startEditFolder(folder.id, folder.name, folder.icon, folder.color)}
+                          onDelete={() => handleDeleteFolder(folder.id, folder.name)}
+                        />
+                        {/* Child folders */}
+                        {folders.filter(f => f.parentId === folder.id).map((child) => (
+                          <FolderRow
+                            key={child.id}
+                            folder={child}
+                            isActive={selectedFolder === child.id && !selectedTag}
+                            noteCount={notes.filter(n => !n.archived && n.folder === child.id).length}
+                            onSelect={() => { setSelectedFolder(child.id); onNavigate?.() || onClose?.(); }}
+                            onEdit={() => startEditFolder(child.id, child.name, child.icon, child.color)}
+                            onDelete={() => handleDeleteFolder(child.id, child.name)}
+                            indent
+                          />
+                        ))}
                       </div>
-                    </div>
-                  ))
+                    ))}
+                  </>
                 )}
               </motion.div>
             )}
@@ -356,8 +349,65 @@ export default function Sidebar({ onClose, onNavigate }: SidebarProps) {
         initialIcon={editingFolderForModal?.icon ?? '📁'}
         initialColor={editingFolderForModal?.color ?? '#6366f1'}
         title={editingFolderForModal ? 'Edit Folder' : 'New Folder'}
+        folders={folders}
+        editingFolderId={editingFolderForModal?.id}
       />
     </aside>
+  );
+}
+
+// ─── FolderRow ────────────────────────────────────────────────────────────────
+
+function FolderRow({
+  folder,
+  isActive,
+  noteCount,
+  onSelect,
+  onEdit,
+  onDelete,
+  indent,
+}: {
+  folder: { id: string; name: string; icon: string; color: string };
+  isActive: boolean;
+  noteCount: number;
+  onSelect: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  indent?: boolean;
+}) {
+  return (
+    <div className={cn('group', indent && 'pl-4')}>
+      <div
+        className={cn(
+          'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors',
+          isActive
+            ? 'bg-brand-500/10 text-brand-600 dark:text-brand-400'
+            : 'text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800'
+        )}
+        onClick={onSelect}
+      >
+        {indent && <span className="w-2 h-2 border-l border-b border-surface-300 dark:border-surface-600 flex-shrink-0 -mt-1" />}
+        <span className="text-base flex-shrink-0" style={{ fontSize: '14px' }}>
+          {folder.icon}
+        </span>
+        <span className="flex-1 text-sm truncate">{folder.name}</span>
+        <span className="text-xs text-surface-400 flex-shrink-0">{noteCount}</span>
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0">
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            className="p-0.5 rounded hover:bg-surface-200 dark:hover:bg-surface-700"
+          >
+            <Pencil size={11} />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            className="p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-400"
+          >
+            <Trash2 size={11} />
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

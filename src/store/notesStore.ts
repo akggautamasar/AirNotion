@@ -125,10 +125,11 @@ interface NotesStore {
   setNoteColor: (id: string, color: NoteColor) => Promise<void>;
   setNoteStatus: (id: string, status: Note['status']) => Promise<void>;
   moveNoteToFolder: (noteId: string, folderId: string) => Promise<void>;
+  copyNoteToFolder: (noteId: string, folderId: string) => Promise<void>;
   setNoteLock: (id: string, pin: string | null) => Promise<void>;
 
   // Folder actions
-  createFolder: (name: string, icon?: string, color?: string) => void;
+  createFolder: (name: string, icon?: string, color?: string, parentId?: string) => void;
   updateFolder: (id: string, updates: Partial<Folder>) => void;
   deleteFolder: (id: string) => void;
   setSelectedFolder: (id: string) => void;
@@ -452,18 +453,50 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     await get().updateNote(noteId, { folder: folderId });
   },
 
+  copyNoteToFolder: async (noteId, folderId) => {
+    const { notes, settings } = get();
+    const original = notes.find((n) => n.id === noteId);
+    if (!original) return;
+    const now = new Date().toISOString();
+    const copy: Note = {
+      ...original,
+      id: generateId(),
+      folder: folderId,
+      title: original.title ? `${original.title} (copy)` : 'Copy',
+      createdAt: now,
+      updatedAt: now,
+      telegramMessageId: undefined,
+      pinned: false,
+      backlinks: [],
+    };
+    const updatedNotes = [...notes, copy];
+    const withBacklinks = recomputeBacklinks(updatedNotes);
+    set({ notes: withBacklinks });
+    storage.setNotes(withBacklinks);
+    get().computeTags();
+    const hasAnyCredentials = get().hasServerCredentials || (settings.telegramBotToken && settings.telegramChatId);
+    if (hasAnyCredentials) {
+      try {
+        await apiPost('/api/notes', copy, settings);
+      } catch (err) {
+        console.error('Failed to sync copied note:', err);
+      }
+    }
+  },
+
   setNoteLock: async (id, pin) => {
     await get().updateNote(id, { locked: pin !== null, lockPin: pin ?? undefined });
   },
 
   // ── Folder actions ─────────────────────────────────────────────────────────
 
-  createFolder: (name, icon = '📁', color = '#6366f1') => {
+  createFolder: (name, icon = '📁', color = '#6366f1', parentId?: string) => {
     const folder: Folder = {
       id: generateId(),
       name,
       icon,
       color,
+      ...(parentId ? { parentId } : {}),
       createdAt: new Date().toISOString(),
     };
     const folders = [...get().folders, folder];

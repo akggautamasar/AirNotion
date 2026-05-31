@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { Folder } from '@/lib/types';
 
 const FOLDER_ICONS = ['📁', '📂', '🗂️', '📋', '📌', '⭐', '🎯', '💡', '🔖', '🏷️', '📝', '💼', '🎓', '🏠', '💻'];
 const FOLDER_COLORS = [
@@ -14,11 +15,14 @@ const FOLDER_COLORS = [
 interface FolderModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (name: string, icon: string, color: string) => void;
+  onSubmit: (name: string, icon: string, color: string, parentId?: string) => void;
   initialName?: string;
   initialIcon?: string;
   initialColor?: string;
+  initialParentId?: string;
   title?: string;
+  folders?: Folder[];
+  editingFolderId?: string;
 }
 
 export default function FolderModal({
@@ -28,29 +32,39 @@ export default function FolderModal({
   initialName = '',
   initialIcon = '📁',
   initialColor = '#6366f1',
+  initialParentId = '',
   title = 'New Folder',
+  folders = [],
+  editingFolderId,
 }: FolderModalProps) {
   const [name, setName] = useState(initialName);
   const [icon, setIcon] = useState(initialIcon);
   const [color, setColor] = useState(initialColor);
+  const [parentId, setParentId] = useState(initialParentId);
 
   useEffect(() => {
     if (isOpen) {
       setName(initialName);
       setIcon(initialIcon);
       setColor(initialColor);
+      setParentId(initialParentId);
     }
-  }, [isOpen, initialName, initialIcon, initialColor]);
+  }, [isOpen, initialName, initialIcon, initialColor, initialParentId]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    onSubmit(name.trim(), icon, color);
+    onSubmit(name.trim(), icon, color, parentId || undefined);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') onClose();
   };
+
+  // Only show root folders as parent options (no nested nesting beyond 1 level)
+  const parentOptions = folders.filter(
+    (f) => !f.parentId && f.id !== editingFolderId
+  );
 
   return (
     <AnimatePresence>
@@ -153,13 +167,37 @@ export default function FolderModal({
                   />
                 </div>
 
+                {/* Parent folder picker */}
+                {parentOptions.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider mb-2">
+                      Parent Folder (optional)
+                    </label>
+                    <select
+                      value={parentId}
+                      onChange={(e) => setParentId(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-surface-50 dark:bg-surface-700 border border-surface-200 dark:border-surface-600 rounded-xl text-sm text-surface-900 dark:text-white outline-none focus:border-brand-500 dark:focus:border-brand-400 transition-colors"
+                    >
+                      <option value="">— None (root folder) —</option>
+                      {parentOptions.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.icon} {f.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 {/* Preview */}
                 <div className="flex items-center gap-2 px-3 py-2 bg-surface-50 dark:bg-surface-700/50 rounded-xl">
+                  {parentId && (
+                    <span className="text-xs text-surface-400">
+                      {parentOptions.find((f) => f.id === parentId)?.icon}{' '}
+                      {parentOptions.find((f) => f.id === parentId)?.name} /
+                    </span>
+                  )}
                   <span className="text-xl">{icon}</span>
-                  <span
-                    className="text-sm font-medium"
-                    style={{ color }}
-                  >
+                  <span className="text-sm font-medium" style={{ color }}>
                     {name || 'Folder name'}
                   </span>
                 </div>

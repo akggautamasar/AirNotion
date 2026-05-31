@@ -13,6 +13,8 @@ import {
   RotateCcw,
   FolderOpen,
   Check,
+  ChevronLeft,
+  FolderSymlink,
 } from 'lucide-react';
 import { useNotesStore } from '@/store/notesStore';
 import { cn, noteColorToClass, formatRelativeTime, truncate } from '@/lib/utils';
@@ -27,82 +29,86 @@ interface NoteCardProps {
   onClick: () => void;
 }
 
+type SubPanel = 'none' | 'move' | 'copy' | 'color';
+
 export default function NoteCard({ note, view, isActive, onClick }: NoteCardProps) {
-  const { pinNote, archiveNote, restoreNote, deleteNote, duplicateNote, setNoteColor, folders, moveNoteToFolder } = useNotesStore();
+  const { pinNote, archiveNote, restoreNote, deleteNote, duplicateNote, setNoteColor, folders, moveNoteToFolder, copyNoteToFolder } = useNotesStore();
   const [showDropdown, setShowDropdown] = useState(false);
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showFolderPicker, setShowFolderPicker] = useState(false);
+  const [subPanel, setSubPanel] = useState<SubPanel>('none');
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const colors = noteColorToClass(note.color);
 
-  // Close dropdown on outside click
   useEffect(() => {
     if (!showDropdown) return;
     const handler = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowDropdown(false);
-        setShowColorPicker(false);
-        setShowFolderPicker(false);
+        setSubPanel('none');
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showDropdown]);
 
+  const closeAll = () => { setShowDropdown(false); setSubPanel('none'); };
+
   const handlePin = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     await pinNote(note.id);
     toast.success(note.pinned ? 'Unpinned' : 'Pinned');
-    setShowDropdown(false);
+    closeAll();
   }, [pinNote, note.id, note.pinned]);
 
   const handleArchive = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     await archiveNote(note.id);
     toast.success('Archived');
-    setShowDropdown(false);
+    closeAll();
   }, [archiveNote, note.id]);
 
   const handleRestore = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     await restoreNote(note.id);
     toast.success('Restored');
-    setShowDropdown(false);
+    closeAll();
   }, [restoreNote, note.id]);
 
   const handleDelete = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     await deleteNote(note.id);
     toast.success('Deleted');
-    setShowDropdown(false);
+    closeAll();
   }, [deleteNote, note.id]);
 
   const handleDuplicate = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     await duplicateNote(note.id);
     toast.success('Duplicated');
-    setShowDropdown(false);
+    closeAll();
   }, [duplicateNote, note.id]);
 
   const handleColorChange = useCallback(async (color: NoteColor) => {
     await setNoteColor(note.id, color);
-    setShowColorPicker(false);
-    setShowDropdown(false);
+    closeAll();
   }, [setNoteColor, note.id]);
 
   const handleMoveToFolder = useCallback(async (folderId: string) => {
     await moveNoteToFolder(note.id, folderId);
     toast.success('Moved to folder');
-    setShowFolderPicker(false);
-    setShowDropdown(false);
+    closeAll();
   }, [moveNoteToFolder, note.id]);
+
+  const handleCopyToFolder = useCallback(async (folderId: string) => {
+    await copyNoteToFolder(note.id, folderId);
+    toast.success('Copied to folder');
+    closeAll();
+  }, [copyNoteToFolder, note.id]);
 
   const openDropdown = (e: React.MouseEvent) => {
     e.stopPropagation();
     setShowDropdown((v) => !v);
-    setShowColorPicker(false);
-    setShowFolderPicker(false);
+    setSubPanel('none');
   };
 
   const DropdownMenu = () => (
@@ -113,112 +119,110 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: -4 }}
           transition={{ duration: 0.1 }}
-          className="absolute right-0 top-full mt-1 z-30 w-44 bg-white dark:bg-surface-800 rounded-xl shadow-dropdown border border-surface-200 dark:border-surface-700 py-1 overflow-hidden"
+          className="absolute right-0 top-full mt-1 z-30 w-52 bg-white dark:bg-surface-800 rounded-xl shadow-dropdown border border-surface-200 dark:border-surface-700 py-1 overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Pin/Unpin */}
-          <DropdownItem onClick={handlePin} icon={<Star size={13} className={cn(note.pinned && 'fill-yellow-500 text-yellow-500')} />}>
-            {note.pinned ? 'Unpin' : 'Pin'}
-          </DropdownItem>
-
-          {/* Archive / Restore */}
-          {note.archived ? (
-            <DropdownItem onClick={handleRestore} icon={<RotateCcw size={13} />}>
-              Restore to notes
-            </DropdownItem>
-          ) : (
-            <DropdownItem onClick={handleArchive} icon={<Archive size={13} />}>
-              Archive
-            </DropdownItem>
+          {/* Sub-panel: Move to folder */}
+          {subPanel === 'move' && (
+            <FolderSubPanel
+              title="Move to folder"
+              currentFolderId={note.folder}
+              folders={folders}
+              onSelect={handleMoveToFolder}
+              onBack={() => setSubPanel('none')}
+            />
           )}
 
-          {/* Move to folder */}
-          {folders.length > 0 && (
-            <div className="relative">
+          {/* Sub-panel: Copy to folder */}
+          {subPanel === 'copy' && (
+            <FolderSubPanel
+              title="Copy to folder"
+              folders={folders}
+              onSelect={handleCopyToFolder}
+              onBack={() => setSubPanel('none')}
+            />
+          )}
+
+          {/* Sub-panel: Color */}
+          {subPanel === 'color' && (
+            <>
+              <div className="flex items-center gap-1 px-2 py-1.5 border-b border-surface-100 dark:border-surface-700">
+                <button
+                  onClick={() => setSubPanel('none')}
+                  className="p-1 rounded hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 transition-colors"
+                >
+                  <ChevronLeft size={13} />
+                </button>
+                <span className="text-xs font-semibold text-surface-500 dark:text-surface-400">Color</span>
+              </div>
+              <div className="p-2">
+                <ColorPicker value={note.color} onChange={handleColorChange} />
+              </div>
+            </>
+          )}
+
+          {/* Main menu */}
+          {subPanel === 'none' && (
+            <>
+              <DropdownItem onClick={handlePin} icon={<Star size={13} className={cn(note.pinned && 'fill-yellow-500 text-yellow-500')} />}>
+                {note.pinned ? 'Unpin' : 'Pin'}
+              </DropdownItem>
+
+              {note.archived ? (
+                <DropdownItem onClick={handleRestore} icon={<RotateCcw size={13} />}>
+                  Restore to notes
+                </DropdownItem>
+              ) : (
+                <DropdownItem onClick={handleArchive} icon={<Archive size={13} />}>
+                  Archive
+                </DropdownItem>
+              )}
+
+              {folders.length > 0 && (
+                <>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setSubPanel('move'); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+                  >
+                    <FolderOpen size={13} className="text-surface-400 flex-shrink-0" />
+                    <span className="flex-1 text-left">Move to folder</span>
+                    <span className="text-surface-300 dark:text-surface-500">›</span>
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setSubPanel('copy'); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+                  >
+                    <FolderSymlink size={13} className="text-surface-400 flex-shrink-0" />
+                    <span className="flex-1 text-left">Copy to folder</span>
+                    <span className="text-surface-300 dark:text-surface-500">›</span>
+                  </button>
+                </>
+              )}
+
+              <DropdownItem onClick={handleDuplicate} icon={<Copy size={13} />}>
+                Duplicate
+              </DropdownItem>
+
               <button
-                onClick={(e) => { e.stopPropagation(); setShowFolderPicker((v) => !v); setShowColorPicker(false); }}
+                onClick={(e) => { e.stopPropagation(); setSubPanel('color'); }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
               >
-                <FolderOpen size={13} className="text-surface-400 flex-shrink-0" />
-                <span className="flex-1 text-left">Move to folder</span>
+                <Palette size={13} className="text-surface-400 flex-shrink-0" />
+                <span className="flex-1 text-left">Color</span>
                 <span className="text-surface-300 dark:text-surface-500">›</span>
               </button>
-              <AnimatePresence>
-                {showFolderPicker && (
-                  <motion.div
-                    initial={{ opacity: 0, x: -4 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -4 }}
-                    transition={{ duration: 0.1 }}
-                    className="absolute right-full top-0 mr-1 w-44 bg-white dark:bg-surface-800 rounded-xl shadow-dropdown border border-surface-200 dark:border-surface-700 py-1 z-40"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button
-                      onClick={() => handleMoveToFolder('all')}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
-                    >
-                      <span>📋</span>
-                      <span className="flex-1 text-left">All Notes</span>
-                      {note.folder === 'all' && <Check size={11} className="text-brand-500" />}
-                    </button>
-                    {folders.map((folder) => (
-                      <button
-                        key={folder.id}
-                        onClick={() => handleMoveToFolder(folder.id)}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
-                      >
-                        <span>{folder.icon}</span>
-                        <span className="flex-1 text-left truncate">{folder.name}</span>
-                        {note.folder === folder.id && <Check size={11} className="text-brand-500" />}
-                      </button>
-                    ))}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+
+              <div className="my-1 border-t border-surface-100 dark:border-surface-700" />
+
+              <button
+                onClick={handleDelete}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+              >
+                <Trash2 size={13} className="flex-shrink-0" />
+                <span>Delete</span>
+              </button>
+            </>
           )}
-
-          {/* Duplicate */}
-          <DropdownItem onClick={handleDuplicate} icon={<Copy size={13} />}>
-            Duplicate
-          </DropdownItem>
-
-          {/* Color */}
-          <div className="relative">
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowColorPicker((v) => !v); setShowFolderPicker(false); }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
-            >
-              <Palette size={13} className="text-surface-400 flex-shrink-0" />
-              <span className="flex-1 text-left">Color</span>
-              <span className="text-surface-300 dark:text-surface-500">›</span>
-            </button>
-            <AnimatePresence>
-              {showColorPicker && (
-                <motion.div
-                  initial={{ opacity: 0, x: -4 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -4 }}
-                  transition={{ duration: 0.1 }}
-                  className="absolute right-full top-0 mr-1 bg-white dark:bg-surface-800 rounded-xl shadow-dropdown border border-surface-200 dark:border-surface-700 p-2 z-40"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <ColorPicker value={note.color} onChange={handleColorChange} />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <div className="my-1 border-t border-surface-100 dark:border-surface-700" />
-
-          {/* Delete */}
-          <button
-            onClick={handleDelete}
-            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-          >
-            <Trash2 size={13} className="flex-shrink-0" />
-            <span>Delete</span>
-          </button>
         </motion.div>
       )}
     </AnimatePresence>
@@ -239,14 +243,11 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
             : `hover:bg-surface-100 dark:hover:bg-surface-800 active:bg-surface-100 dark:active:bg-surface-800 ${colors.bg} ${colors.bgDark}`
         )}
       >
-        {/* Color dot */}
         {note.color !== 'default' && (
           <div className={cn('w-2 h-2 rounded-full flex-shrink-0', noteColorDot(note.color))} />
         )}
-        {/* Pin indicator */}
         {note.pinned && <Star size={12} className="flex-shrink-0 text-yellow-500 fill-yellow-500" />}
 
-        {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <p className="text-sm md:text-sm font-medium text-surface-900 dark:text-surface-100 truncate">
@@ -268,12 +269,10 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
           </p>
         </div>
 
-        {/* Date — hidden on mobile (shown inline above) */}
         <span className="text-xs text-surface-400 flex-shrink-0 hidden md:block">
           {formatRelativeTime(note.updatedAt)}
         </span>
 
-        {/* Context menu button — always visible on mobile, hover-only on desktop */}
         <div ref={dropdownRef} className="relative flex-shrink-0">
           <button
             onClick={openDropdown}
@@ -306,19 +305,16 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
         colors.bg, colors.bgDark, colors.border, colors.borderDark
       )}
     >
-      {/* Pin badge */}
       {note.pinned && (
         <div className="absolute top-2 left-2">
           <Star size={13} className="text-yellow-500 fill-yellow-500" />
         </div>
       )}
 
-      {/* Icon / emoji */}
       {note.icon && (
         <div className="text-2xl mb-2 leading-none">{note.icon}</div>
       )}
 
-      {/* Title */}
       <h3 className={cn(
         'font-semibold text-sm leading-snug mb-1.5 pr-6',
         note.title ? 'text-surface-900 dark:text-surface-100' : 'text-surface-400 italic'
@@ -326,14 +322,12 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
         {note.title || 'Untitled'}
       </h3>
 
-      {/* Preview */}
       {note.plainText && (
         <p className="text-xs text-surface-500 dark:text-surface-400 leading-relaxed truncate-3 flex-1 mb-2">
           {truncate(note.plainText, 120)}
         </p>
       )}
 
-      {/* Tags */}
       {note.tags.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-2">
           {note.tags.slice(0, 3).map((tag) => (
@@ -350,7 +344,6 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
         </div>
       )}
 
-      {/* Footer */}
       <div className="flex items-center justify-between mt-auto">
         <span className="text-xs text-surface-400">{formatRelativeTime(note.updatedAt)}</span>
         {note.wordCount > 0 && (
@@ -358,7 +351,6 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
         )}
       </div>
 
-      {/* Archived restore badge */}
       {note.archived && (
         <div className="absolute top-2 right-8">
           <button
@@ -370,7 +362,6 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
         </div>
       )}
 
-      {/* Context menu button */}
       <div ref={dropdownRef} className="absolute top-2 right-2" onClick={(e) => e.stopPropagation()}>
         <button
           onClick={openDropdown}
@@ -388,6 +379,55 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
   );
 }
 
+// ─── FolderSubPanel ───────────────────────────────────────────────────────────
+
+function FolderSubPanel({
+  title,
+  currentFolderId,
+  folders,
+  onSelect,
+  onBack,
+}: {
+  title: string;
+  currentFolderId?: string;
+  folders: { id: string; icon: string; name: string }[];
+  onSelect: (id: string) => void;
+  onBack: () => void;
+}) {
+  return (
+    <>
+      <div className="flex items-center gap-1 px-2 py-1.5 border-b border-surface-100 dark:border-surface-700">
+        <button
+          onClick={onBack}
+          className="p-1 rounded hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 transition-colors"
+        >
+          <ChevronLeft size={13} />
+        </button>
+        <span className="text-xs font-semibold text-surface-500 dark:text-surface-400">{title}</span>
+      </div>
+      <button
+        onClick={() => onSelect('all')}
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+      >
+        <span>📋</span>
+        <span className="flex-1 text-left">All Notes</span>
+        {currentFolderId === 'all' && <Check size={11} className="text-brand-500" />}
+      </button>
+      {folders.map((folder) => (
+        <button
+          key={folder.id}
+          onClick={() => onSelect(folder.id)}
+          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+        >
+          <span>{folder.icon}</span>
+          <span className="flex-1 text-left truncate">{folder.name}</span>
+          {currentFolderId === folder.id && <Check size={11} className="text-brand-500" />}
+        </button>
+      ))}
+    </>
+  );
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function noteColorDot(color: string): string {
@@ -397,46 +437,6 @@ function noteColorDot(color: string): string {
     purple: 'bg-purple-400', pink: 'bg-pink-400', brown: 'bg-amber-600', gray: 'bg-gray-400',
   };
   return map[color] || 'bg-surface-300';
-}
-
-function ActionBtn({
-  children,
-  onClick,
-  title,
-  danger,
-}: {
-  children: React.ReactNode;
-  onClick: (e: React.MouseEvent) => void;
-  title?: string;
-  danger?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      className={cn(
-        'p-1.5 rounded-lg transition-colors',
-        danger
-          ? 'text-surface-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'
-          : 'text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 hover:bg-white/80 dark:hover:bg-surface-700'
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function AnimatedActions({ visible, children }: { visible: boolean; children: React.ReactNode }) {
-  return (
-    <div
-      className={cn(
-        'absolute top-2 right-2 flex items-center gap-0.5 bg-white dark:bg-surface-800 rounded-lg shadow-dropdown border border-surface-200 dark:border-surface-700 px-1 py-0.5 transition-all duration-150',
-        visible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1 pointer-events-none'
-      )}
-    >
-      {children}
-    </div>
-  );
 }
 
 function DropdownItem({
