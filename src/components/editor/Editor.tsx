@@ -57,11 +57,12 @@ import { SlashCommandList, getSlashCommands } from './SlashCommands';
 import DrawingCanvas from '@/components/ui/DrawingCanvas';
 import VoiceRecorder from '@/components/ui/VoiceRecorder';
 import ImageAnnotator from '@/components/ui/ImageAnnotator';
+import ShortcutsModal from '@/components/ui/ShortcutsModal';
 import type { Note } from '@/lib/types';
 import {
   Maximize2, Minimize2, Hash, Link as LinkIcon, X, Tag,
   Mic, PenLine, Calendar, Lock, Unlock, Share2, Download,
-  CheckCircle, Upload,
+  CheckCircle, Upload, BookOpen, Edit3, Keyboard, FileDown,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -285,6 +286,9 @@ export default function Editor({ note }: EditorProps) {
   const [showDueDatePicker, setShowDueDatePicker] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [isLocked, setIsLocked] = useState(note.locked ?? false);
+  const [isReadingMode, setIsReadingMode] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [lockPin, setLockPin] = useState('');
   const [lockPinError, setLockPinError] = useState(false);
   const [showSetLockModal, setShowSetLockModal] = useState(false);
@@ -433,6 +437,38 @@ export default function Editor({ note }: EditorProps) {
     await updateNote(note.id, { dueDate: date || undefined });
     if (!date) setShowDueDatePicker(false);
   }, [note.id, updateNote]);
+
+  // Reading mode: disable/enable editor editing
+  useEffect(() => {
+    if (editor) editor.setEditable(!isReadingMode);
+  }, [isReadingMode, editor]);
+
+  // Markdown download
+  const handleDownloadMarkdown = useCallback(() => {
+    if (!editor) return;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const TurndownService = require('turndown');
+    const td = new TurndownService({ headingStyle: 'atx', bulletListMarker: '-', codeBlockStyle: 'fenced' });
+    td.addRule('taskItem', {
+      filter: (node: HTMLElement) => node.nodeName === 'LI' && node.getAttribute('data-type') === 'taskItem',
+      replacement: (content: string, node: HTMLElement) => {
+        const checked = node.getAttribute('data-checked') === 'true';
+        return `- [${checked ? 'x' : ' '}] ${content.trim()}\n`;
+      },
+    });
+    const markdown = td.turndown(editor.getHTML());
+    const title = localTitle || 'Untitled';
+    const tagsLine = note.tags.length ? `**Tags:** ${note.tags.map(t => `#${t}`).join(' ')}\n\n` : '';
+    const full = `# ${title}\n\n${tagsLine}${markdown}`;
+    const blob = new Blob([full], { type: 'text/markdown; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Downloaded as Markdown');
+  }, [editor, localTitle, note.tags]);
 
   // Share
   const handleShare = useCallback(async () => {
@@ -758,6 +794,9 @@ export default function Editor({ note }: EditorProps) {
         )}
       </AnimatePresence>
 
+      {/* Shortcuts modal */}
+      <ShortcutsModal isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
+
       {/* Hidden import file input */}
       <input
         ref={importInputRef}
@@ -822,6 +861,31 @@ export default function Editor({ note }: EditorProps) {
               )}
               <button onClick={() => setShowDueDatePicker(false)} className="text-surface-400 hover:text-surface-600 p-1">
                 <CheckCircle size={13} className="text-brand-500" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Reading mode banner */}
+      <AnimatePresence>
+        {isReadingMode && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden flex-shrink-0"
+          >
+            <div className="flex items-center justify-between px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800">
+              <div className="flex items-center gap-2">
+                <BookOpen size={13} className="text-amber-600 dark:text-amber-400" />
+                <span className="text-xs font-medium text-amber-700 dark:text-amber-300">Reading Mode — editing disabled</span>
+              </div>
+              <button
+                onClick={() => setIsReadingMode(false)}
+                className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-100 px-2 py-1 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors"
+              >
+                <Edit3 size={12} /> Edit
               </button>
             </div>
           </motion.div>
@@ -954,10 +1018,16 @@ export default function Editor({ note }: EditorProps) {
           {settings.syncStatus === 'success' && <span className="text-green-400">Saved</span>}
           {note.locked && !isLocked && <span className="text-amber-500 flex items-center gap-0.5"><Lock size={10} /> Locked</span>}
         </div>
-        <button onClick={() => setIsFocusMode((f) => !f)} title="Focus mode (⌘⇧F)"
-          className={cn('p-1 rounded hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors', isFocusMode && 'text-brand-500')}>
-          {isFocusMode ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button onClick={() => setShowShortcuts(true)} title="Keyboard shortcuts (?)"
+            className="p-1 rounded hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors">
+            <Keyboard size={12} />
+          </button>
+          <button onClick={() => setIsFocusMode((f) => !f)} title="Focus mode (⌘⇧F)"
+            className={cn('p-1 rounded hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors', isFocusMode && 'text-brand-500')}>
+            {isFocusMode ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+          </button>
+        </div>
       </div>
 
       {/* ── Samsung Notes bottom toolbar ── */}
@@ -1001,10 +1071,53 @@ export default function Editor({ note }: EditorProps) {
           label="Import"
           onClick={() => importInputRef.current?.click()}
         />
+        {/* Read */}
+        <ToolbarBtn
+          icon={<BookOpen size={20} />}
+          label="Read"
+          active={isReadingMode}
+          onClick={() => setIsReadingMode((v) => !v)}
+          activeColor="text-amber-500"
+        />
         {/* Share */}
         <ToolbarBtn icon={<Share2 size={20} />} label="Share" onClick={handleShare} />
-        {/* Export */}
-        <ToolbarBtn icon={<Download size={20} />} label="Export" onClick={handleExport} />
+        {/* Export — dropdown */}
+        <div className="relative">
+          <ToolbarBtn
+            icon={<Download size={20} />}
+            label="Export"
+            active={showExportMenu}
+            onClick={() => setShowExportMenu((v) => !v)}
+            activeColor="text-brand-500"
+          />
+          <AnimatePresence>
+            {showExportMenu && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 4 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 4 }}
+                transition={{ duration: 0.1 }}
+                className="absolute bottom-full mb-2 right-0 w-44 bg-white dark:bg-surface-800 rounded-xl shadow-dropdown border border-surface-200 dark:border-surface-700 z-20 py-1 overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  onClick={() => { handleExport(); setShowExportMenu(false); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+                >
+                  <Download size={13} className="text-surface-400" />
+                  Print / Save PDF
+                </button>
+                <button
+                  onClick={() => { handleDownloadMarkdown(); setShowExportMenu(false); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+                >
+                  <FileDown size={13} className="text-surface-400" />
+                  Download .md
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
     </div>
   );

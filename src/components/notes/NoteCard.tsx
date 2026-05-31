@@ -27,11 +27,14 @@ interface NoteCardProps {
   view: 'grid' | 'list';
   isActive?: boolean;
   onClick: () => void;
+  isSelecting?: boolean;
+  isSelected?: boolean;
+  onSelect?: (id: string) => void;
 }
 
 type SubPanel = 'none' | 'move' | 'copy' | 'color';
 
-export default function NoteCard({ note, view, isActive, onClick }: NoteCardProps) {
+export default function NoteCard({ note, view, isActive, onClick, isSelecting, isSelected, onSelect }: NoteCardProps) {
   const { pinNote, archiveNote, restoreNote, deleteNote, duplicateNote, setNoteColor, folders, moveNoteToFolder, copyNoteToFolder } = useNotesStore();
   const [showDropdown, setShowDropdown] = useState(false);
   const [subPanel, setSubPanel] = useState<SubPanel>('none');
@@ -235,14 +238,24 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
         initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -4 }}
-        onClick={onClick}
+        onClick={isSelecting ? () => onSelect?.(note.id) : onClick}
         className={cn(
           'group flex items-center gap-3 px-4 py-3 md:py-3 cursor-pointer transition-colors border-b border-surface-100 dark:border-surface-800 min-h-[80px] md:min-h-0',
-          isActive
+          isSelected
+            ? 'bg-brand-500/10'
+            : isActive
             ? 'bg-brand-500/10 border-l-2 border-l-brand-500'
             : `hover:bg-surface-100 dark:hover:bg-surface-800 active:bg-surface-100 dark:active:bg-surface-800 ${colors.bg} ${colors.bgDark}`
         )}
       >
+        {isSelecting && (
+          <div className={cn(
+            'w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all',
+            isSelected ? 'bg-brand-500 border-brand-500' : 'border-surface-400'
+          )}>
+            {isSelected && <Check size={10} className="text-white" />}
+          </div>
+        )}
         {note.color !== 'default' && (
           <div className={cn('w-2 h-2 rounded-full flex-shrink-0', noteColorDot(note.color))} />
         )}
@@ -298,13 +311,22 @@ export default function NoteCard({ note, view, isActive, onClick }: NoteCardProp
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       whileHover={{ y: -2 }}
-      onClick={onClick}
+      onClick={isSelecting ? () => onSelect?.(note.id) : onClick}
       className={cn(
         'group relative flex flex-col p-4 rounded-xl cursor-pointer transition-all border shadow-card hover:shadow-card-hover',
+        isSelected ? 'ring-2 ring-brand-500 ring-offset-2 ring-offset-white dark:ring-offset-surface-900' :
         isActive ? 'ring-2 ring-brand-500 ring-offset-2 ring-offset-white dark:ring-offset-surface-900' : '',
         colors.bg, colors.bgDark, colors.border, colors.borderDark
       )}
     >
+      {isSelecting && (
+        <div className={cn(
+          'absolute top-2 left-2 w-5 h-5 rounded-full border-2 flex items-center justify-center z-10 transition-all',
+          isSelected ? 'bg-brand-500 border-brand-500' : 'bg-white/80 dark:bg-surface-700/80 border-surface-400'
+        )}>
+          {isSelected && <Check size={11} className="text-white" />}
+        </div>
+      )}
       {note.pinned && (
         <div className="absolute top-2 left-2">
           <Star size={13} className="text-yellow-500 fill-yellow-500" />

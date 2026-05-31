@@ -11,13 +11,22 @@ import {
   ChevronDown,
   Search,
   X,
+  MousePointer2,
+  Trash2,
+  Archive,
+  CheckSquare,
+  LayoutTemplate,
+  FolderOpen,
+  Check,
 } from 'lucide-react';
 import { useNotesStore } from '@/store/notesStore';
 import { cn } from '@/lib/utils';
 import NoteCard from './NoteCard';
 import KanbanView from './KanbanView';
 import CalendarView from './CalendarView';
+import TemplateModal from '@/components/ui/TemplateModal';
 import type { ViewMode } from '@/lib/types';
+import toast from 'react-hot-toast';
 
 const VIEW_ICONS: Record<ViewMode, React.ReactNode> = {
   grid:     <LayoutGrid size={15} />,
@@ -51,9 +60,60 @@ export default function NoteList() {
     selectedFolder,
     selectedTag,
     notes,
+    deleteNote,
+    archiveNote,
+    moveNoteToFolder,
+    folders,
+    createNote,
+    updateNote,
   } = useNotesStore();
 
   const [showSort, setShowSort] = useState(false);
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showBulkFolderMenu, setShowBulkFolderMenu] = useState(false);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const exitSelect = useCallback(() => {
+    setIsSelecting(false);
+    setSelectedIds(new Set());
+    setShowBulkFolderMenu(false);
+  }, []);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    for (const id of Array.from(selectedIds)) await deleteNote(id);
+    toast.success(`Deleted ${selectedIds.size} note${selectedIds.size > 1 ? 's' : ''}`);
+    exitSelect();
+  }, [selectedIds, deleteNote, exitSelect]);
+
+  const handleBulkArchive = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    for (const id of Array.from(selectedIds)) await archiveNote(id);
+    toast.success(`Archived ${selectedIds.size} note${selectedIds.size > 1 ? 's' : ''}`);
+    exitSelect();
+  }, [selectedIds, archiveNote, exitSelect]);
+
+  const handleBulkMove = useCallback(async (folderId: string) => {
+    if (selectedIds.size === 0) return;
+    for (const id of Array.from(selectedIds)) await moveNoteToFolder(id, folderId);
+    toast.success(`Moved ${selectedIds.size} note${selectedIds.size > 1 ? 's' : ''}`);
+    exitSelect();
+  }, [selectedIds, moveNoteToFolder, exitSelect]);
+
+  const handleCreateFromTemplate = useCallback(async (title: string, content: string, icon: string) => {
+    const note = await createNote();
+    await updateNote(note.id, { title, content, icon });
+    setActiveNote(note.id);
+  }, [createNote, updateNote, setActiveNote]);
 
   const filteredNotes = getFilteredNotes();
   const pinnedNotes = filteredNotes.filter((n) => n.pinned);
@@ -84,27 +144,34 @@ export default function NoteList() {
     ? searchResults.length
     : filteredNotes.length;
 
+  const sharedHeaderProps = {
+    title: getHeaderTitle(),
+    count: totalCount,
+    viewMode,
+    setViewMode,
+    showSort,
+    setShowSort,
+    settings,
+    setSettings,
+    isSearchOpen,
+    searchQuery,
+    setSearchQuery,
+    openSearch,
+    closeSearch,
+    isSelecting,
+    selectedCount: selectedIds.size,
+    onToggleSelect: () => { setIsSelecting((v) => !v); setSelectedIds(new Set()); },
+    onShowTemplates: () => setShowTemplates(true),
+  };
+
   if (viewMode === 'kanban') {
     return (
       <div className="flex flex-col h-full">
-        <ListHeader
-          title={getHeaderTitle()}
-          count={totalCount}
-          viewMode={viewMode}
-          setViewMode={setViewMode}
-          showSort={showSort}
-          setShowSort={setShowSort}
-          settings={settings}
-          setSettings={setSettings}
-          isSearchOpen={isSearchOpen}
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-          openSearch={openSearch}
-          closeSearch={closeSearch}
-        />
+        <ListHeader {...sharedHeaderProps} />
         <div className="flex-1 overflow-auto">
           <KanbanView />
         </div>
+        <TemplateModal isOpen={showTemplates} onClose={() => setShowTemplates(false)} onCreate={handleCreateFromTemplate} />
       </div>
     );
   }
@@ -112,45 +179,18 @@ export default function NoteList() {
   if (viewMode === 'calendar') {
     return (
       <div className="flex flex-col h-full">
-        <ListHeader
-          title={getHeaderTitle()}
-          count={totalCount}
-          viewMode={viewMode}
-          setViewMode={setViewMode}
-          showSort={showSort}
-          setShowSort={setShowSort}
-          settings={settings}
-          setSettings={setSettings}
-          isSearchOpen={isSearchOpen}
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-          openSearch={openSearch}
-          closeSearch={closeSearch}
-        />
+        <ListHeader {...sharedHeaderProps} />
         <div className="flex-1 overflow-auto">
           <CalendarView />
         </div>
+        <TemplateModal isOpen={showTemplates} onClose={() => setShowTemplates(false)} onCreate={handleCreateFromTemplate} />
       </div>
     );
   }
 
   return (
     <div className="flex flex-col h-full">
-      <ListHeader
-        title={getHeaderTitle()}
-        count={totalCount}
-        viewMode={viewMode}
-        setViewMode={setViewMode}
-        showSort={showSort}
-        setShowSort={setShowSort}
-        settings={settings}
-        setSettings={setSettings}
-        isSearchOpen={isSearchOpen}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        openSearch={openSearch}
-        closeSearch={closeSearch}
-      />
+      <ListHeader {...sharedHeaderProps} />
 
       {/* Search bar */}
       <AnimatePresence>
@@ -184,6 +224,88 @@ export default function NoteList() {
         )}
       </AnimatePresence>
 
+      {/* Bulk action bar */}
+      <AnimatePresence>
+        {isSelecting && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden border-b border-surface-200 dark:border-surface-700 bg-brand-50 dark:bg-brand-900/20 flex-shrink-0"
+          >
+            <div className="flex items-center gap-2 px-3 py-2 flex-wrap">
+              <span className="text-xs font-semibold text-brand-600 dark:text-brand-400 flex-shrink-0">
+                {selectedIds.size} selected
+              </span>
+              <button
+                onClick={() => {
+                  const allIds = new Set(displayNotes.map((n) => n.id));
+                  setSelectedIds((prev) => prev.size === allIds.size ? new Set() : allIds);
+                }}
+                className="flex items-center gap-1 text-xs text-surface-600 dark:text-surface-300 px-2 py-1 rounded-lg bg-white/60 dark:bg-surface-700/60 hover:bg-white dark:hover:bg-surface-700 transition-colors"
+              >
+                <CheckSquare size={12} />
+                {selectedIds.size === displayNotes.length ? 'Deselect all' : 'Select all'}
+              </button>
+
+              {selectedIds.size > 0 && (
+                <>
+                  <button
+                    onClick={handleBulkArchive}
+                    className="flex items-center gap-1 text-xs text-surface-600 dark:text-surface-300 px-2 py-1 rounded-lg bg-white/60 dark:bg-surface-700/60 hover:bg-white dark:hover:bg-surface-700 transition-colors"
+                  >
+                    <Archive size={12} /> Archive
+                  </button>
+
+                  {folders.length > 0 && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowBulkFolderMenu((v) => !v)}
+                        className="flex items-center gap-1 text-xs text-surface-600 dark:text-surface-300 px-2 py-1 rounded-lg bg-white/60 dark:bg-surface-700/60 hover:bg-white dark:hover:bg-surface-700 transition-colors"
+                      >
+                        <FolderOpen size={12} /> Move ›
+                      </button>
+                      <AnimatePresence>
+                        {showBulkFolderMenu && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -4, scale: 0.96 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                            className="absolute top-full left-0 mt-1 w-44 bg-white dark:bg-surface-800 rounded-xl shadow-dropdown border border-surface-200 dark:border-surface-700 z-20 py-1 overflow-hidden"
+                          >
+                            {folders.map((f) => (
+                              <button
+                                key={f.id}
+                                onClick={() => { handleBulkMove(f.id); setShowBulkFolderMenu(false); }}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+                              >
+                                <span>{f.icon}</span>
+                                <span className="truncate">{f.name}</span>
+                              </button>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleBulkDelete}
+                    className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400 px-2 py-1 rounded-lg bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+                  >
+                    <Trash2 size={12} /> Delete
+                  </button>
+                </>
+              )}
+
+              <button onClick={exitSelect} className="ml-auto text-xs text-surface-400 hover:text-surface-600 p-1">
+                <X size={14} />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Note list */}
       <div className="flex-1 overflow-y-auto">
         {displayNotes.length === 0 ? (
@@ -203,6 +325,9 @@ export default function NoteList() {
                         view="grid"
                         isActive={activeNoteId === note.id}
                         onClick={() => handleNoteClick(note.id)}
+                        isSelecting={isSelecting}
+                        isSelected={selectedIds.has(note.id)}
+                        onSelect={toggleSelect}
                       />
                     ))}
                   </AnimatePresence>
@@ -224,6 +349,9 @@ export default function NoteList() {
                         view="grid"
                         isActive={activeNoteId === note.id}
                         onClick={() => handleNoteClick(note.id)}
+                        isSelecting={isSelecting}
+                        isSelected={selectedIds.has(note.id)}
+                        onSelect={toggleSelect}
                       />
                     ))}
                   </AnimatePresence>
@@ -245,6 +373,9 @@ export default function NoteList() {
                       view="list"
                       isActive={activeNoteId === note.id}
                       onClick={() => handleNoteClick(note.id)}
+                      isSelecting={isSelecting}
+                      isSelected={selectedIds.has(note.id)}
+                      onSelect={toggleSelect}
                     />
                   ))}
                 </AnimatePresence>
@@ -263,6 +394,9 @@ export default function NoteList() {
                       view="list"
                       isActive={activeNoteId === note.id}
                       onClick={() => handleNoteClick(note.id)}
+                      isSelecting={isSelecting}
+                      isSelected={selectedIds.has(note.id)}
+                      onSelect={toggleSelect}
                     />
                   ))}
                 </AnimatePresence>
@@ -271,6 +405,8 @@ export default function NoteList() {
           </div>
         )}
       </div>
+
+      <TemplateModal isOpen={showTemplates} onClose={() => setShowTemplates(false)} onCreate={handleCreateFromTemplate} />
     </div>
   );
 }
@@ -291,6 +427,10 @@ interface ListHeaderProps {
   setSearchQuery: (q: string) => void;
   openSearch: () => void;
   closeSearch: () => void;
+  isSelecting: boolean;
+  selectedCount: number;
+  onToggleSelect: () => void;
+  onShowTemplates: () => void;
 }
 
 function ListHeader({
@@ -304,6 +444,9 @@ function ListHeader({
   setSettings,
   isSearchOpen,
   openSearch,
+  isSelecting,
+  onToggleSelect,
+  onShowTemplates,
 }: ListHeaderProps) {
   return (
     <div className="flex items-center justify-between px-4 py-3 border-b border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 sticky top-0 z-10">
@@ -313,6 +456,29 @@ function ListHeader({
       </div>
 
       <div className="flex items-center gap-1">
+        {/* Templates */}
+        <button
+          onClick={onShowTemplates}
+          title="Create from template"
+          className="p-1.5 rounded-lg transition-colors text-surface-400 hover:text-surface-600 hover:bg-surface-100 dark:hover:bg-surface-800"
+        >
+          <LayoutTemplate size={14} />
+        </button>
+
+        {/* Multi-select */}
+        <button
+          onClick={onToggleSelect}
+          title="Select notes"
+          className={cn(
+            'p-1.5 rounded-lg transition-colors',
+            isSelecting
+              ? 'bg-brand-500/10 text-brand-500'
+              : 'text-surface-400 hover:text-surface-600 hover:bg-surface-100 dark:hover:bg-surface-800'
+          )}
+        >
+          <MousePointer2 size={14} />
+        </button>
+
         {/* Search */}
         <button
           onClick={openSearch}
