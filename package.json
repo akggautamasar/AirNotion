@@ -43,7 +43,7 @@
     "@tiptap/extension-underline": "^2.5.9",
     "@tiptap/react": "^2.5.9",
     "@tiptap/starter-kit": "^2.5.9",
-    "@tiptap/suggestion": "^3.24.0",
+    "@tiptap/suggestion": "^2.27.0",
     "@types/react-syntax-highlighter": "^15.5.13",
     "axios": "^1.7.3",
     "clsx": "^2.1.1",
