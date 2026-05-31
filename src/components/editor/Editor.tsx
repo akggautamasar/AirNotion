@@ -561,7 +561,6 @@ export default function Editor({ note }: EditorProps) {
       } else if (file.type === 'application/pdf' || ext === 'pdf') {
         const toastId = toast.loading(`Rendering "${file.name}"…`);
         try {
-          // Dynamically import pdfjs-dist — it uses browser-only APIs
           const pdfjsLib = await import('pdfjs-dist');
           pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
@@ -569,32 +568,45 @@ export default function Editor({ note }: EditorProps) {
           const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
           const totalPages = pdf.numPages;
 
-          // Insert filename header
-          editor.chain().focus().insertContent(
-            `<p><strong>📄 ${file.name} (${totalPages} page${totalPages > 1 ? 's' : ''})</strong></p>`
-          ).run();
-
-          // Render each page as a high-res image and insert
+          // Phase 1: render every page to a data URL (progress shown in toast)
+          const dataUrls: string[] = [];
           for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
             toast.loading(`Rendering page ${pageNum}/${totalPages}…`, { id: toastId });
             const page = await pdf.getPage(pageNum);
-            const scale = 2; // 2× for crisp rendering on retina screens
-            const viewport = page.getViewport({ scale });
-
+            const viewport = page.getViewport({ scale: 2 });
             const canvas = document.createElement('canvas');
             canvas.width = viewport.width;
             canvas.height = viewport.height;
-            const ctx = canvas.getContext('2d')!;
-
             await page.render({ canvas, viewport }).promise;
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-
-            editor.chain().focus().setImage({ src: dataUrl, alt: `${file.name} page ${pageNum}` }).run();
-            // Add a small paragraph gap between pages
-            if (pageNum < totalPages) {
-              editor.chain().focus().insertContent('<p></p>').run();
-            }
+            dataUrls.push(canvas.toDataURL('image/jpeg', 0.92));
           }
+
+          // Phase 2: insert everything in one shot at the end of the document.
+          // We do NOT use focus()/setImage() in a loop — that loses cursor position
+          // between awaits and causes each image to overwrite the previous one.
+          toast.loading('Inserting pages…', { id: toastId });
+
+          const headerNode = {
+            type: 'paragraph',
+            content: [{
+              type: 'text',
+              marks: [{ type: 'bold' }],
+              text: `📄 ${file.name} (${totalPages} page${totalPages > 1 ? 's' : ''})`,
+            }],
+          };
+
+          const imageNodes = dataUrls.flatMap((src, i) => {
+            const imgNode = { type: 'image', attrs: { src, alt: `${file.name} page ${i + 1}` } };
+            // Insert a paragraph spacer between pages (not after the last one)
+            return i < dataUrls.length - 1
+              ? [imgNode, { type: 'paragraph' }]
+              : [imgNode];
+          });
+
+          editor.commands.insertContentAt(
+            editor.state.doc.content.size,
+            [headerNode, ...imageNodes],
+          );
 
           toast.success(`"${file.name}" inserted (${totalPages} pages)`, { id: toastId });
         } catch (err) {
