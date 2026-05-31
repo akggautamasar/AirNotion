@@ -145,67 +145,6 @@ const AudioNode = Node.create({
   },
 });
 
-// ─── PDF Node (for embedded PDF documents) ────────────────────────────────────
-
-const PdfNode = Node.create({
-  name: 'pdfNode',
-  group: 'block',
-  atom: true,
-  draggable: true,
-
-  addAttributes() {
-    return {
-      src: { default: '' },
-      filename: { default: 'document.pdf' },
-    };
-  },
-
-  parseHTML() {
-    return [{ tag: 'div[data-type="pdf-node"]' }];
-  },
-
-  renderHTML({ node }) {
-    return ['div', { 'data-type': 'pdf-node', 'data-src': '(pdf)', 'data-filename': node.attrs.filename }];
-  },
-
-  addNodeView() {
-    return ({ node, editor, getPos }) => {
-      const wrapper = document.createElement('div');
-      wrapper.className = 'pdf-node my-4 rounded-xl border border-surface-200 dark:border-surface-700 overflow-hidden';
-      wrapper.setAttribute('contenteditable', 'false');
-
-      // Header bar
-      const header = document.createElement('div');
-      header.className = 'flex items-center gap-2 px-3 py-2 bg-surface-50 dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700';
-      header.innerHTML = `
-        <span style="font-size:18px">📄</span>
-        <span style="font-size:13px;font-weight:600;color:var(--surface-700,#374151);flex:1;truncate">${node.attrs.filename}</span>
-      `;
-
-      const delBtn = document.createElement('button');
-      delBtn.textContent = '✕';
-      delBtn.className = 'text-xs text-surface-400 hover:text-red-500 p-1 ml-auto';
-      delBtn.onclick = (e) => {
-        e.stopPropagation();
-        const pos = getPos();
-        editor.view.dispatch(editor.view.state.tr.delete(pos, pos + node.nodeSize));
-      };
-      header.appendChild(delBtn);
-
-      // PDF embed
-      const embed = document.createElement('embed');
-      embed.src = node.attrs.src;
-      embed.type = 'application/pdf';
-      embed.style.cssText = 'width:100%;height:600px;display:block;background:#fff;';
-
-      wrapper.appendChild(header);
-      wrapper.appendChild(embed);
-
-      return { dom: wrapper };
-    };
-  },
-});
-
 // ─── Slash Command Extension ──────────────────────────────────────────────────
 
 const SlashCommandExtension = Extension.create({
@@ -351,7 +290,6 @@ export default function Editor({ note }: EditorProps) {
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       FontFamily,
       AudioNode,
-      PdfNode,
       SlashCommandExtension,
     ],
     content: note.content || '',
@@ -513,7 +451,7 @@ export default function Editor({ note }: EditorProps) {
     }
   }, [editor, localTitle, note.tags]);
 
-  // Import — handle PDF, images, text
+  // Import — handle PDF (page-by-page images), images, text
   const handleImport = useCallback(async (files: FileList | null) => {
     if (!files || !editor) return;
 
@@ -521,7 +459,6 @@ export default function Editor({ note }: EditorProps) {
       const ext = file.name.split('.').pop()?.toLowerCase() || '';
 
       if (file.type.startsWith('image/')) {
-        // Insert image as base64
         const reader = new FileReader();
         reader.onload = () => {
           editor.chain().focus().setImage({ src: reader.result as string, alt: file.name }).run();
@@ -529,28 +466,55 @@ export default function Editor({ note }: EditorProps) {
         reader.readAsDataURL(file);
 
       } else if (file.type === 'application/pdf' || ext === 'pdf') {
-        // Embed PDF in a PdfNode
-        const reader = new FileReader();
-        reader.onload = async () => {
-          const dataUrl = reader.result as string;
-          editor.chain().focus().insertContent({
-            type: 'pdfNode',
-            attrs: { src: dataUrl, filename: file.name },
-          }).run();
-          toast.success(`PDF "${file.name}" inserted`);
-        };
-        reader.readAsDataURL(file);
+        const toastId = toast.loading(`Rendering "${file.name}"…`);
+        try {
+          // Dynamically import pdfjs-dist — it uses browser-only APIs
+          const pdfjsLib = await import('pdfjs-dist');
+          pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
-      } else if (
-        file.type === 'text/plain' || ext === 'txt' ||
-        file.type === 'text/markdown' || ext === 'md'
-      ) {
-        // Insert as plain text
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          const totalPages = pdf.numPages;
+
+          // Insert filename header
+          editor.chain().focus().insertContent(
+            `<p><strong>📄 ${file.name} (${totalPages} page${totalPages > 1 ? 's' : ''})</strong></p>`
+          ).run();
+
+          // Render each page as a high-res image and insert
+          for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+            toast.loading(`Rendering page ${pageNum}/${totalPages}…`, { id: toastId });
+            const page = await pdf.getPage(pageNum);
+            const scale = 2; // 2× for crisp rendering on retina screens
+            const viewport = page.getViewport({ scale });
+
+            const canvas = document.createElement('canvas');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            const ctx = canvas.getContext('2d')!;
+
+            await page.render({ canvas, viewport }).promise;
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+
+            editor.chain().focus().setImage({ src: dataUrl, alt: `${file.name} page ${pageNum}` }).run();
+            // Add a small paragraph gap between pages
+            if (pageNum < totalPages) {
+              editor.chain().focus().insertContent('<p></p>').run();
+            }
+          }
+
+          toast.success(`"${file.name}" inserted (${totalPages} pages)`, { id: toastId });
+        } catch (err) {
+          console.error('PDF render error:', err);
+          toast.error('Failed to render PDF', { id: toastId });
+        }
+
+      } else if (file.type === 'text/plain' || ext === 'txt' || file.type === 'text/markdown' || ext === 'md') {
         const text = await file.text();
         editor.chain().focus().insertContent(
           text.split('\n').map(line => `<p>${line || '<br/>'}</p>`).join('')
         ).run();
-        toast.success(`"${file.name}" inserted as text`);
+        toast.success(`"${file.name}" inserted`);
 
       } else {
         toast.error(`Unsupported file type: ${file.type || ext}`);
