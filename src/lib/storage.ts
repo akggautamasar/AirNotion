@@ -6,6 +6,7 @@ const KEYS = {
   SETTINGS: 'airnotion_settings',
   FOLDERS: 'airnotion_folders',
   TAGS: 'airnotion_tags',
+  DELETED_NOTES: 'airnotion_deleted_notes',
 } as const;
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -90,6 +91,22 @@ export const storage = {
 
   setTags(tags: Tag[]): void {
     safeSet(KEYS.TAGS, tags);
+  },
+
+  getDeletedNoteIds(): Set<string> {
+    return new Set(safeGet<string[]>(KEYS.DELETED_NOTES, []));
+  },
+
+  addDeletedNoteId(id: string): void {
+    const ids = this.getDeletedNoteIds();
+    ids.add(id);
+    safeSet(KEYS.DELETED_NOTES, Array.from(ids).slice(-2000));
+  },
+
+  removeDeletedNoteId(id: string): void {
+    const ids = this.getDeletedNoteIds();
+    ids.delete(id);
+    safeSet(KEYS.DELETED_NOTES, Array.from(ids));
   },
 
   clearAll(): void {

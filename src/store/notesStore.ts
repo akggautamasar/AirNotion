@@ -363,18 +363,19 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
       activeNoteId: get().activeNoteId === id ? null : get().activeNoteId,
     });
     storage.setNotes(withBacklinks);
+    storage.addDeletedNoteId(id); // prevent mergeNotes from re-adding
     get().computeTags();
 
     const idx = storage.getMessageIndex();
-    const msgId = idx[id] || note.telegramMessageId;
     delete idx[id];
     storage.setMessageIndex(idx);
 
+    // Always call server delete when credentials exist — msgId not needed server-side
     const hasAnyCredentials =
       get().hasServerCredentials || (settings.telegramBotToken && settings.telegramChatId);
-    if (hasAnyCredentials && msgId) {
+    if (hasAnyCredentials) {
       try {
-        await apiDelete(`/api/notes/${id}?messageId=${msgId}`, settings);
+        await apiDelete(`/api/notes/${id}`, settings);
       } catch (err) {
         console.error('Failed to delete note from Telegram:', err);
       }
@@ -729,9 +730,13 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 // ─── Note merge helper ────────────────────────────────────────────────────────
 
 function mergeNotes(local: Note[], remote: Note[]): Note[] {
+  const deletedIds = storage.getDeletedNoteIds();
   const map = new Map<string, Note>();
-  for (const note of local) map.set(note.id, note);
+  for (const note of local) {
+    if (!deletedIds.has(note.id)) map.set(note.id, note);
+  }
   for (const note of remote) {
+    if (deletedIds.has(note.id)) continue; // never re-add explicitly deleted notes
     const existing = map.get(note.id);
     if (!existing || note.updatedAt > existing.updatedAt) {
       map.set(note.id, note);

@@ -60,7 +60,7 @@ import type { Note } from '@/lib/types';
 import {
   Maximize2, Minimize2, Hash, Link as LinkIcon, X, Tag,
   Mic, PenLine, Calendar, Lock, Unlock, Share2, Download,
-  CheckCircle,
+  CheckCircle, Upload,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -141,6 +141,67 @@ const AudioNode = Node.create({
       container.appendChild(delBtn);
 
       return { dom: container };
+    };
+  },
+});
+
+// ─── PDF Node (for embedded PDF documents) ────────────────────────────────────
+
+const PdfNode = Node.create({
+  name: 'pdfNode',
+  group: 'block',
+  atom: true,
+  draggable: true,
+
+  addAttributes() {
+    return {
+      src: { default: '' },
+      filename: { default: 'document.pdf' },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: 'div[data-type="pdf-node"]' }];
+  },
+
+  renderHTML({ node }) {
+    return ['div', { 'data-type': 'pdf-node', 'data-src': '(pdf)', 'data-filename': node.attrs.filename }];
+  },
+
+  addNodeView() {
+    return ({ node, editor, getPos }) => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'pdf-node my-4 rounded-xl border border-surface-200 dark:border-surface-700 overflow-hidden';
+      wrapper.setAttribute('contenteditable', 'false');
+
+      // Header bar
+      const header = document.createElement('div');
+      header.className = 'flex items-center gap-2 px-3 py-2 bg-surface-50 dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700';
+      header.innerHTML = `
+        <span style="font-size:18px">📄</span>
+        <span style="font-size:13px;font-weight:600;color:var(--surface-700,#374151);flex:1;truncate">${node.attrs.filename}</span>
+      `;
+
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '✕';
+      delBtn.className = 'text-xs text-surface-400 hover:text-red-500 p-1 ml-auto';
+      delBtn.onclick = (e) => {
+        e.stopPropagation();
+        const pos = getPos();
+        editor.view.dispatch(editor.view.state.tr.delete(pos, pos + node.nodeSize));
+      };
+      header.appendChild(delBtn);
+
+      // PDF embed
+      const embed = document.createElement('embed');
+      embed.src = node.attrs.src;
+      embed.type = 'application/pdf';
+      embed.style.cssText = 'width:100%;height:600px;display:block;background:#fff;';
+
+      wrapper.appendChild(header);
+      wrapper.appendChild(embed);
+
+      return { dom: wrapper };
     };
   },
 });
@@ -226,6 +287,7 @@ export default function Editor({ note }: EditorProps) {
   const [showDrawing, setShowDrawing] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
   const [showDueDatePicker, setShowDueDatePicker] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const [isLocked, setIsLocked] = useState(note.locked ?? false);
   const [lockPin, setLockPin] = useState('');
   const [lockPinError, setLockPinError] = useState(false);
@@ -289,6 +351,7 @@ export default function Editor({ note }: EditorProps) {
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       FontFamily,
       AudioNode,
+      PdfNode,
       SlashCommandExtension,
     ],
     content: note.content || '',
@@ -390,10 +453,110 @@ export default function Editor({ note }: EditorProps) {
     } catch { /* user cancelled */ }
   }, [note]);
 
-  // Export / Print
+  // Export — clean print window with proper styling
   const handleExport = useCallback(() => {
-    window.print();
-  }, []);
+    if (!editor) return;
+    const htmlContent = editor.getHTML();
+    const title = localTitle || 'Untitled';
+    const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const tagsHtml = note.tags.length
+      ? `<div class="tags">${note.tags.map(t => `<span class="tag">#${t}</span>`).join(' ')}</div>` : '';
+
+    const printHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>${title}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111; background: #fff; padding: 40px; max-width: 800px; margin: 0 auto; line-height: 1.7; }
+    h1.note-title { font-size: 2rem; font-weight: 800; margin-bottom: 8px; }
+    .meta { font-size: 0.8rem; color: #888; margin-bottom: 4px; }
+    .tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0 20px; }
+    .tag { background: #f1f5f9; color: #475569; padding: 2px 10px; border-radius: 999px; font-size: 0.75rem; }
+    hr.divider { border: none; border-top: 1px solid #e2e8f0; margin: 16px 0 24px; }
+    h1, h2, h3, h4, h5, h6 { margin: 1.2em 0 0.4em; line-height: 1.3; }
+    p { margin: 0.6em 0; }
+    ul, ol { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin: 0.2em 0; }
+    blockquote { border-left: 3px solid #6366f1; padding: 8px 16px; margin: 12px 0; background: #f8f9ff; color: #444; }
+    pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow: auto; font-size: 0.85rem; margin: 12px 0; }
+    code { background: #f1f5f9; padding: 2px 5px; border-radius: 4px; font-size: 0.88em; }
+    pre code { background: none; padding: 0; }
+    img { max-width: 100%; border-radius: 6px; margin: 8px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+    th, td { border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left; }
+    th { background: #f8fafc; font-weight: 600; }
+    a { color: #6366f1; }
+    .audio-note-node, .pdf-node { display: none; }
+    @media print {
+      body { padding: 20px; }
+      @page { margin: 20mm; }
+    }
+  </style>
+</head>
+<body>
+  <h1 class="note-title">${title}</h1>
+  <p class="meta">Exported from AirNotion · ${dateStr}</p>
+  ${tagsHtml}
+  <hr class="divider" />
+  ${htmlContent}
+  <script>window.onload = function(){ window.print(); }<\/script>
+</body>
+</html>`;
+
+    const blob = new Blob([printHtml], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank');
+    if (win) {
+      win.onafterprint = () => { URL.revokeObjectURL(url); };
+    }
+  }, [editor, localTitle, note.tags]);
+
+  // Import — handle PDF, images, text
+  const handleImport = useCallback(async (files: FileList | null) => {
+    if (!files || !editor) return;
+
+    for (const file of Array.from(files)) {
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+
+      if (file.type.startsWith('image/')) {
+        // Insert image as base64
+        const reader = new FileReader();
+        reader.onload = () => {
+          editor.chain().focus().setImage({ src: reader.result as string, alt: file.name }).run();
+        };
+        reader.readAsDataURL(file);
+
+      } else if (file.type === 'application/pdf' || ext === 'pdf') {
+        // Embed PDF in a PdfNode
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const dataUrl = reader.result as string;
+          editor.chain().focus().insertContent({
+            type: 'pdfNode',
+            attrs: { src: dataUrl, filename: file.name },
+          }).run();
+          toast.success(`PDF "${file.name}" inserted`);
+        };
+        reader.readAsDataURL(file);
+
+      } else if (
+        file.type === 'text/plain' || ext === 'txt' ||
+        file.type === 'text/markdown' || ext === 'md'
+      ) {
+        // Insert as plain text
+        const text = await file.text();
+        editor.chain().focus().insertContent(
+          text.split('\n').map(line => `<p>${line || '<br/>'}</p>`).join('')
+        ).run();
+        toast.success(`"${file.name}" inserted as text`);
+
+      } else {
+        toast.error(`Unsupported file type: ${file.type || ext}`);
+      }
+    }
+  }, [editor]);
 
   // Lock / Unlock
   const handleToggleLock = useCallback(async () => {
@@ -573,6 +736,17 @@ export default function Editor({ note }: EditorProps) {
           </>
         )}
       </AnimatePresence>
+
+      {/* Hidden import file input */}
+      <input
+        ref={importInputRef}
+        type="file"
+        className="hidden"
+        accept="image/*,.pdf,text/plain,.txt,.md,text/markdown"
+        multiple
+        onChange={(e) => handleImport(e.target.files)}
+        onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+      />
 
       {/* Drawing canvas modal */}
       <DrawingCanvas isOpen={showDrawing} onClose={() => setShowDrawing(false)} onSave={handleDrawingSave} />
@@ -799,6 +973,12 @@ export default function Editor({ note }: EditorProps) {
           active={note.locked ?? false}
           onClick={note.locked && !isLocked ? handleRemoveLock : handleToggleLock}
           activeColor="text-amber-500"
+        />
+        {/* Import */}
+        <ToolbarBtn
+          icon={<Upload size={20} />}
+          label="Import"
+          onClick={() => importInputRef.current?.click()}
         />
         {/* Share */}
         <ToolbarBtn icon={<Share2 size={20} />} label="Share" onClick={handleShare} />
