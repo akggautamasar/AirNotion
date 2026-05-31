@@ -21,3 +21,6 @@ yarn-error.log*
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+check_bottom.mjs
+check_editor.mjs
+gen_token.mjs
