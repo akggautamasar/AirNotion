@@ -53,7 +53,18 @@ export default function AppLayout() {
     }
   }, [activeNoteId, isMobile, isTablet]);
 
-  // Global keyboard shortcuts
+  // Keep the Render free-tier instance alive while a browser tab is open.
+  // Pings the lightweight health endpoint every 8 minutes (well under the
+  // 15-minute idle spin-down threshold). No-ops when the tab is hidden.
+  useEffect(() => {
+    const ping = () => {
+      if (document.visibilityState === 'visible') {
+        fetch('/api/config').catch(() => {/* ignore — just keeping the dyno warm */});
+      }
+    };
+    const id = setInterval(ping, 8 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const isMac = navigator.platform.toUpperCase().includes('MAC');

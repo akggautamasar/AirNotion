@@ -1,0 +1,35 @@
+# Prevents the Render free-tier web service from spinning down.
+# Render free services sleep after 15 minutes of inactivity.
+# This workflow pings the health-check endpoint every 10 minutes, 24/7.
+#
+# Setup (one-time):
+#   1. Go to your GitHub repo → Settings → Secrets and variables → Actions
+#   2. Add a secret called APP_URL with your Render URL, e.g.:
+#      https://airnotion.onrender.com
+#   3. Enable this workflow in the Actions tab if it isn't already running.
+#
+# GitHub Actions free tier: unlimited minutes for public repos,
+# 2 000 minutes/month for private repos — well within limits for a ping job.
+
+name: Keep Alive
+
+on:
+  schedule:
+    # Every 10 minutes — GitHub cron minimum is 5 min but 10 is more reliable
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # allow manual trigger from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping health endpoint
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.APP_URL }}/api/config")
+          echo "Response status: $STATUS"
+          if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ]; then
+            echo "Service is awake ✓"
+          else
+            echo "Warning: unexpected status $STATUS"
+          fi

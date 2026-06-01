@@ -4,7 +4,8 @@ services:
     runtime: node
     plan: free
     buildCommand: npm install && npm run build
-    startCommand: npm run start
+    # Explicit memory cap — keeps the process under Render's 512 MB free-tier limit
+    startCommand: node --max-old-space-size=400 node_modules/.bin/next start
     healthCheckPath: /api/config
     envVars:
       - key: NODE_ENV
@@ -18,6 +19,8 @@ services:
       - key: NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
         sync: false
       - key: TELEGRAM_INDEX_MSG_ID
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
         sync: false
       - key: NEXT_PUBLIC_APP_URL
         sync: false
