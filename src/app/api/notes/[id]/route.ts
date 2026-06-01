@@ -27,6 +27,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   }
 }
 
+const MAX_NOTE_BYTES = 20 * 1024 * 1024; // 20 MB hard limit per note save
+
 /**
  * PUT /api/notes/[id]
  * Re-uploads note content to Telegram, updates the metadata index.
@@ -36,6 +38,15 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     await db.ensureInit();
     const userId = req.headers.get('x-user-id');
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    // Reject oversized payloads before reading into memory
+    const contentLength = parseInt(req.headers.get('content-length') ?? '0', 10);
+    if (contentLength > MAX_NOTE_BYTES) {
+      return NextResponse.json(
+        { error: `Note is too large (${(contentLength / 1048576).toFixed(1)} MB). Remove some images to reduce the size below 20 MB.` },
+        { status: 413 }
+      );
+    }
 
     const body = await req.json() as Note;
     if (body.id !== params.id) return NextResponse.json({ error: 'ID mismatch' }, { status: 400 });

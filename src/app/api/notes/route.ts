@@ -41,6 +41,8 @@ export async function GET(req: NextRequest) {
   }
 }
 
+const MAX_NOTE_BYTES = 20 * 1024 * 1024;
+
 /**
  * POST /api/notes
  * Upload full note content to Telegram, store metadata index in memory.
@@ -50,6 +52,14 @@ export async function POST(req: NextRequest) {
     await db.ensureInit();
     const userId = req.headers.get('x-user-id');
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const contentLength = parseInt(req.headers.get('content-length') ?? '0', 10);
+    if (contentLength > MAX_NOTE_BYTES) {
+      return NextResponse.json(
+        { error: `Note is too large (${(contentLength / 1048576).toFixed(1)} MB). Remove some images to reduce the size below 20 MB.` },
+        { status: 413 }
+      );
+    }
 
     const note = await req.json() as Note;
     if (!note.id) return NextResponse.json({ error: 'Note must have an id' }, { status: 400 });

@@ -289,6 +289,7 @@ export default function Editor({ note }: EditorProps) {
   const [isReadingMode, setIsReadingMode] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [noteSizeWarning, setNoteSizeWarning] = useState(false);
   const [lockPin, setLockPin] = useState('');
   const [lockPinError, setLockPinError] = useState(false);
   const [showSetLockModal, setShowSetLockModal] = useState(false);
@@ -307,11 +308,19 @@ export default function Editor({ note }: EditorProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note.id]);
 
-  // Debounced save
+  // Debounced save — large notes (>4 MB) skip auto-save to avoid memory spikes.
+  // The user must save manually (⌘S) or the note is saved when switching away.
+  const LARGE_NOTE_THRESHOLD = 4 * 1024 * 1024; // 4 MB
   const debouncedSave = useCallback(
     debounce(async (content: string) => {
       if (isSavingRef.current) return;
       if (content === lastSavedContentRef.current) return;
+      // Skip auto-save for large notes — only manual save allowed
+      if (new Blob([content]).size > LARGE_NOTE_THRESHOLD) {
+        setNoteSizeWarning(true);
+        return;
+      }
+      setNoteSizeWarning(false);
       isSavingRef.current = true;
       lastSavedContentRef.current = content;
       try { await updateNote(note.id, { content }); }
@@ -412,7 +421,10 @@ export default function Editor({ note }: EditorProps) {
 
   const handleManualSave = useCallback(async () => {
     if (!editor) return;
-    await updateNote(note.id, { content: editor.getHTML(), title: localTitle });
+    const content = editor.getHTML();
+    await updateNote(note.id, { content, title: localTitle });
+    lastSavedContentRef.current = content;
+    setNoteSizeWarning(false);
     toast.success('Saved');
   }, [editor, note.id, updateNote, localTitle]);
 
@@ -544,6 +556,26 @@ export default function Editor({ note }: EditorProps) {
     }
   }, [editor, localTitle, note.tags]);
 
+  // Compress an image data-URL to JPEG, capped at maxWidth px wide.
+  // Keeps memory/storage small — critical for free-tier Render instance.
+  const compressImage = useCallback(
+    (dataUrl: string, maxWidth = 1400, quality = 0.80): Promise<string> =>
+      new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxWidth) { height = Math.round(height * maxWidth / width); width = maxWidth; }
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          canvas.getContext('2d')!.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+      }),
+    []
+  );
+
   // Import — handle PDF (page-by-page images), images, text
   const handleImport = useCallback(async (files: FileList | null) => {
     if (!files || !editor) return;
@@ -553,8 +585,9 @@ export default function Editor({ note }: EditorProps) {
 
       if (file.type.startsWith('image/')) {
         const reader = new FileReader();
-        reader.onload = () => {
-          editor.chain().focus().setImage({ src: reader.result as string, alt: file.name }).run();
+        reader.onload = async () => {
+          const compressed = await compressImage(reader.result as string);
+          editor.chain().focus().setImage({ src: compressed, alt: file.name }).run();
         };
         reader.readAsDataURL(file);
 
@@ -568,17 +601,21 @@ export default function Editor({ note }: EditorProps) {
           const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
           const totalPages = pdf.numPages;
 
-          // Phase 1: render every page to a data URL (progress shown in toast)
+          // Phase 1: render every page to a data URL (progress shown in toast).
+          // Scale 1.5 (not 2) and quality 0.78 keeps pages sharp while using
+          // ~45% less memory and storage than the previous 2× / 0.92 settings.
           const dataUrls: string[] = [];
           for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
             toast.loading(`Rendering page ${pageNum}/${totalPages}…`, { id: toastId });
             const page = await pdf.getPage(pageNum);
-            const viewport = page.getViewport({ scale: 2 });
+            const viewport = page.getViewport({ scale: 1.5 });
             const canvas = document.createElement('canvas');
             canvas.width = viewport.width;
             canvas.height = viewport.height;
             await page.render({ canvas, viewport }).promise;
-            dataUrls.push(canvas.toDataURL('image/jpeg', 0.92));
+            dataUrls.push(canvas.toDataURL('image/jpeg', 0.78));
+            // Release canvas memory immediately after converting to data URL
+            canvas.width = 0; canvas.height = 0;
           }
 
           // Phase 2: insert everything in one shot at the end of the document.
@@ -1029,6 +1066,15 @@ export default function Editor({ note }: EditorProps) {
           {settings.syncStatus === 'syncing' && <span className="text-blue-400">Syncing…</span>}
           {settings.syncStatus === 'success' && <span className="text-green-400">Saved</span>}
           {note.locked && !isLocked && <span className="text-amber-500 flex items-center gap-0.5"><Lock size={10} /> Locked</span>}
+          {noteSizeWarning && (
+            <button
+              onClick={handleManualSave}
+              className="text-orange-500 hover:text-orange-600 flex items-center gap-0.5 underline underline-offset-2"
+              title="Note is large — auto-save disabled. Click to save manually."
+            >
+              Large note — save manually (⌘S)
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-0.5">
           <button onClick={() => setShowShortcuts(true)} title="Keyboard shortcuts (?)"

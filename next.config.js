@@ -2,11 +2,12 @@
 const nextConfig = {
   images: {
     remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: 'api.telegram.org',
-      },
+      { protocol: 'https', hostname: 'api.telegram.org' },
     ],
   },
-}
-module.exports = nextConfig
+  // Keep large client-only packages out of the server bundle analysis.
+  // pdfjs-dist and mermaid are dynamically imported in client components only.
+  serverExternalPackages: ['pdfjs-dist', 'mermaid'],
+};
+
+module.exports = nextConfig;
